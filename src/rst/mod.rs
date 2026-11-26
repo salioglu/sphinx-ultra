@@ -13,6 +13,7 @@ pub(crate) mod block;
 pub(crate) mod digits;
 pub mod inline;
 pub mod lines;
+pub(crate) mod prolog;
 mod punctuation;
 pub(crate) mod pygments_aliases;
 pub(crate) mod roles;
@@ -80,6 +81,11 @@ pub struct ParseOptions {
     pub trace_ids: bool,
     /// The configuration the Sphinx-mode read consumes ([`ReadConfig`]).
     pub read: ReadConfig,
+    /// The role registries the document starts from: the table the
+    /// documents read before it in this build left
+    /// ([`ParseOutput::roles_after`], decision 14), or `None` for the
+    /// mode's built-in one, which a document read on its own starts from.
+    pub roles: Option<std::sync::Arc<roles::RoleTable>>,
 }
 
 /// The build configuration a Sphinx-mode parse reads, each field holding
@@ -101,6 +107,40 @@ pub struct ReadConfig {
     /// Whether `sphinx.ext.intersphinx` is in `extensions`: only then is
     /// `:external:` a role ([RC §2.2], [TW F12]).
     pub intersphinx: bool,
+    /// `default_role` (`SP/sphinx/config.py:247`, default `None`): the
+    /// role every document's bare interpreted text starts with, looked up
+    /// as a role name is when the document's parse starts and dropped when
+    /// it ends (`sphinx.util.rst.default_role`); a name no role answers
+    /// warns `default role X not found` ([RC §4.2]).
+    pub default_role: Option<String>,
+    /// `manpages_url` (`config.py:271`, default `None`): the URL the
+    /// `manpage` role links a page to, formatted with its `path`, `page`
+    /// and `section` ([RC §3.7]).
+    pub manpages_url: Option<String>,
+    /// `math_number_all` (`config.py:282`, default `False`): whether the
+    /// `math` directive numbers an equation that has no label.
+    pub math_number_all: bool,
+    /// `rst_prolog` (`config.py:266`, default `None`): text Sphinx's reader
+    /// puts before every document's own lines, after its leading
+    /// field-marker lines (`rst::prolog`, [RC §4.1]). An empty string adds
+    /// nothing.
+    pub rst_prolog: Option<String>,
+    /// `rst_epilog` (`config.py:265`, default `None`): text it puts after
+    /// every document's last line (`rst::prolog`).
+    pub rst_epilog: Option<String>,
+    /// The Python type of the `rst_prolog` or `rst_epilog` that is true
+    /// and no `str`, the prolog's first: Sphinx's reader calls its
+    /// `splitlines` and raises `AttributeError` before it parses the
+    /// document (`SP/sphinx/util/rst.py:98`, `:114`), which ends the build
+    /// (decision 13; [`crate::config::BuildConfig::decoration_crashes`]).
+    pub decoration_crash: Option<String>,
+    /// `source_suffix`'s suffixes (`config.py:243`, default `['.rst']`), in
+    /// order ([`crate::config::SourceSuffix`]): what a toctree entry is
+    /// stripped of (`SP/sphinx/directives/other.py:139-142`), what makes
+    /// an included file a document (`env.note_included`), and, the first
+    /// of them, what `doc2path` appends to a name no document has
+    /// ([`LogLocation::render`]).
+    pub source_suffix: Vec<String>,
 }
 
 impl Default for ReadConfig {
@@ -109,6 +149,13 @@ impl Default for ReadConfig {
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
             intersphinx: false,
+            default_role: None,
+            manpages_url: None,
+            math_number_all: false,
+            rst_prolog: None,
+            rst_epilog: None,
+            decoration_crash: None,
+            source_suffix: vec![".rst".to_string()],
         }
     }
 }
@@ -119,7 +166,65 @@ impl From<&crate::config::BuildConfig> for ReadConfig {
             primary_domain: config.primary_domain.clone(),
             highlight_language: config.highlight_language.clone(),
             intersphinx: config.intersphinx_enabled(),
+            default_role: config.default_role.clone(),
+            manpages_url: config.manpages_url.clone(),
+            math_number_all: config.math_number_all,
+            rst_prolog: config.rst_prolog.clone(),
+            rst_epilog: config.rst_epilog.clone(),
+            decoration_crash: ["rst_prolog", "rst_epilog"].into_iter().find_map(|key| {
+                config
+                    .decoration_crashes
+                    .iter()
+                    .find(|(crashing, _)| crashing == key)
+                    .map(|(_, type_name)| type_name.clone())
+            }),
+            source_suffix: config
+                .source_suffix
+                .suffixes()
+                .map(str::to_string)
+                .collect(),
         }
+    }
+}
+
+impl ReadConfig {
+    /// Sets the key `key` of an oracle fixture's `conf` dict (JSON, the
+    /// confoverrides its generator applied) on this configuration, when it
+    /// is one of its keys: `Ok(true)` once set, `Ok(false)` for a key that
+    /// is not, and an error naming the key for a value of the wrong shape.
+    /// `primary_domain`, `default_role`, `manpages_url`, `rst_prolog` and
+    /// `rst_epilog` may be JSON `null`, Python's `None`; `source_suffix` is
+    /// read as `conf.py`'s is, unless it is a dict of several suffixes,
+    /// whose order the fixture's sorted keys lost
+    /// ([`crate::config::SourceSuffix::from_fixture_conf`]).
+    pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
+        let string = || {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))
+        };
+        let optional = || match value {
+            serde_json::Value::Null => Ok(None),
+            _ => string().map(Some),
+        };
+        match key {
+            "primary_domain" => self.primary_domain = optional()?,
+            "highlight_language" => self.highlight_language = string()?,
+            "default_role" => self.default_role = optional()?,
+            "manpages_url" => self.manpages_url = optional()?,
+            "rst_prolog" => self.rst_prolog = optional()?,
+            "rst_epilog" => self.rst_epilog = optional()?,
+            "source_suffix" => {
+                self.source_suffix = crate::config::SourceSuffix::from_fixture_conf(value)
+                    .map_err(|error| format!("conf key {key}: {error}"))?
+                    .suffixes()
+                    .map(str::to_string)
+                    .collect();
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 }
 
@@ -139,6 +244,7 @@ impl Default for ParseOptions {
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
             trace_ids: false,
             read: ReadConfig::default(),
+            roles: None,
         }
     }
 }
@@ -289,7 +395,8 @@ pub struct PyModuleRecord {
 }
 
 /// One `StandardDomain.note_object` call the parse layer made
-/// (`GenericObject`/`ConfigurationValue.add_target_and_index`).
+/// (`GenericObject`/`ConfigurationValue.add_target_and_index`, and
+/// `ProductionList.make_name_target` for a production's `token`).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ObjectRegistration {
     /// Source-table index of the registering signature; the duplicate
@@ -304,7 +411,8 @@ pub struct ObjectRegistration {
     /// `:envvar:`/`:confval:` role resolves against.
     pub name: String,
     pub node_id: String,
-    /// 1-based line of the signature node (`location=signode`), for the
+    /// 1-based line of the signature node (`location=signode`), or of a
+    /// token's `productionlist` directive (`self.get_location()`), for the
     /// duplicate-description warning.
     pub line: u32,
     /// The parse's record sequence number, drawn at the registration (see
@@ -470,21 +578,20 @@ pub enum LogLocation {
 
 impl LogLocation {
     /// The printed location, rendered against the document's source table,
-    /// the project's source directory and the document's name:
+    /// the project's source directory, the document's name and the first
+    /// `source_suffix` (`source_suffix[0]`):
     ///
-    /// - `Doc` and `DocLine` are `doc2path(docname)`, Sphinx's
-    ///   `srcdir / (docname + source_suffix[0])` (`.rst` until T17c),
-    ///   with `:lineno` when the line is non-zero;
+    /// - `Doc` and `DocLine` are `doc2path(docname)`: `srcdir /` the file
+    ///   the document was discovered in (`SP/sphinx/project.py:114-128`),
+    ///   `<srcdir>/<docname>` with the suffix of its own path, the table's
+    ///   first ([`own_suffix`]), and `:lineno` when the line is non-zero;
     /// - `Tuple` passes the source path as the docname: `doc2path` finds
-    ///   no such document and appends the suffix again
-    ///   (`SP/sphinx/project.py:114-128`), so the document itself, whose
-    ///   table path is absolute, prints `<srcdir>/index.rst.rst:N`, and an
-    ///   included file, whose table path is srcdir-relative, prints
+    ///   no such document and appends `source_suffix[0]` to it, so the
+    ///   document itself, whose table path is absolute, prints
+    ///   `<srcdir>/index.rst.rst:N` with `.rst` first, and an included
+    ///   file, whose table path is srcdir-relative, prints
     ///   `<srcdir>/part.rst.rst:N` ([INC §3.4]);
-    /// - `Node` is `get_node_location`'s `abspath(source)`
-    ///   ([`node_source_path`]), so `<srcdir>/part.rst:N` for an included
-    ///   file (`SP/sphinx/util/logging.py:554-562`); a node without a line
-    ///   prints `path:`;
+    /// - `Node` is `get_node_location`'s ([`Self::render_node`]);
     /// - `None` prints nothing.
     ///
     /// A path already under `srcdir` stands alone, as a rooted one does:
@@ -496,15 +603,10 @@ impl LogLocation {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
     ) -> crate::diagnostics::Location {
         use crate::diagnostics::Location;
-        let table_path = |source: u16| {
-            sources
-                .get(usize::from(source))
-                .or_else(|| sources.first())
-                .map(String::as_str)
-                .unwrap_or_default()
-        };
+        let table_path = |source: u16| table_path(sources, source);
         let under_srcdir = |path: &str| {
             if std::path::Path::new(path).starts_with(srcdir) {
                 path.to_string()
@@ -512,23 +614,45 @@ impl LogLocation {
                 srcdir.join(path).display().to_string()
             }
         };
-        let doc2path = |name: &str| under_srcdir(&format!("{name}.rst"));
+        let own_path = || {
+            let suffix = own_suffix(docname, table_path(0)).unwrap_or(first_suffix);
+            under_srcdir(&format!("{docname}{suffix}"))
+        };
         let path_line = |path: String, line: u32| Location::Path {
             path,
             line: (line != 0).then_some(line),
         };
         match self {
             LogLocation::None => Location::None,
-            LogLocation::Doc => path_line(doc2path(docname), 0),
-            LogLocation::DocLine(line) => path_line(doc2path(docname), line),
-            LogLocation::Tuple { source, line } => path_line(doc2path(table_path(source)), line),
-            LogLocation::Node { source, line } => {
-                let path = node_source_path(table_path(source), srcdir);
-                match line {
-                    0 => Location::Verbatim(format!("{path}:")),
-                    line => path_line(path, line),
-                }
-            }
+            LogLocation::Doc => path_line(own_path(), 0),
+            LogLocation::DocLine(line) => path_line(own_path(), line),
+            LogLocation::Tuple { source, line } => path_line(
+                under_srcdir(&format!("{}{first_suffix}", table_path(source))),
+                line,
+            ),
+            LogLocation::Node { source, line } => Self::render_node(sources, srcdir, source, line),
+        }
+    }
+
+    /// `get_node_location(node)` for a node at `line` of the source-table
+    /// entry `source` ([`LogLocation::Node`]): `abspath(source)`
+    /// ([`node_source_path`]), so `<srcdir>/part.rst:N` for an included
+    /// file (`SP/sphinx/util/logging.py:554-562`), and `path:` for a node
+    /// without a line, which is falsy there. No `doc2path` reads it.
+    pub fn render_node(
+        sources: &[String],
+        srcdir: &std::path::Path,
+        source: u16,
+        line: u32,
+    ) -> crate::diagnostics::Location {
+        use crate::diagnostics::Location;
+        let path = node_source_path(table_path(sources, source), srcdir);
+        match line {
+            0 => Location::Verbatim(format!("{path}:")),
+            line => Location::Path {
+                path,
+                line: Some(line),
+            },
         }
     }
 
@@ -540,16 +664,58 @@ impl LogLocation {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
         message: String,
         category: crate::diagnostics::Category,
     ) -> crate::diagnostics::Diagnostic {
         crate::diagnostics::Diagnostic {
-            location: self.render(sources, srcdir, docname),
+            location: self.render(sources, srcdir, docname, first_suffix),
             severity: crate::diagnostics::Severity::Warning,
             message,
             category,
         }
     }
+
+    /// The `WARNING` record of `logger.warning(message, location=node)`
+    /// about a node at `line` of the source-table entry `source`
+    /// ([`Self::render_node`]).
+    pub fn node_warning(
+        sources: &[String],
+        srcdir: &std::path::Path,
+        source: u16,
+        line: u32,
+        message: String,
+        category: crate::diagnostics::Category,
+    ) -> crate::diagnostics::Diagnostic {
+        crate::diagnostics::Diagnostic {
+            location: Self::render_node(sources, srcdir, source, line),
+            severity: crate::diagnostics::Severity::Warning,
+            message,
+            category,
+        }
+    }
+}
+
+/// The suffix of `own_path`, the file the document `docname` was read
+/// from, which its docname was made from (`Project.path2doc`): what its
+/// name has after the docname's last component. `None` when the name does
+/// not start with it.
+pub(crate) fn own_suffix<'a>(docname: &str, own_path: &'a str) -> Option<&'a str> {
+    let stem = docname.rsplit('/').next().unwrap_or(docname);
+    std::path::Path::new(own_path)
+        .file_name()?
+        .to_str()?
+        .strip_prefix(stem)
+}
+
+/// The path of the source-table entry `source`: the table's first, the
+/// document's own, for an id the table does not have.
+fn table_path(sources: &[String], source: u16) -> &str {
+    sources
+        .get(usize::from(source))
+        .or_else(|| sources.first())
+        .map(String::as_str)
+        .unwrap_or_default()
 }
 
 /// `os.path.abspath(source)`: the path Sphinx's `get_node_location`
@@ -624,11 +790,13 @@ impl ParseLogWarning {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
     ) -> crate::diagnostics::Diagnostic {
         self.location.warning(
             sources,
             srcdir,
             docname,
+            first_suffix,
             self.message.clone(),
             crate::diagnostics::Category::None,
         )
@@ -708,6 +876,16 @@ pub(crate) struct ParseOnlyState {
     /// [`RegistryExport::dependencies`]); sphinx mode only.
     pub(crate) dependency_records: Vec<String>,
     pub(crate) included_records: Vec<String>,
+    /// docutils' role registries as the document has them now: the table
+    /// it started from ([`ParseOptions::roles`]) with what its `role` and
+    /// `default-role` directives and its `default_role` added; `None` for
+    /// the mode's built-in table, until something changes it.
+    pub(crate) roles: Option<std::sync::Arc<roles::RoleTable>>,
+    /// Sphinx's `env.current_document.default_role`: `default_role` when
+    /// the document starts, then the name a `.. default-role::` registered
+    /// ([RC §4.2]); the name a Sphinx role called as the default role
+    /// takes.
+    pub(crate) default_role: Option<String>,
 }
 
 /// docutils' `Duplicate ID: "<id>" used by <holder's start tag> and <the
@@ -778,7 +956,15 @@ pub struct ParseOutput {
     /// The docutils document state the parse leaves behind, which the read
     /// transforms read beside the tree ([`DocumentState`]).
     pub state: DocumentState,
+    /// The role registries the next document of the build starts from:
+    /// the ones this one started from, with the roles its `role`
+    /// directives defined and the default role its `default-role`
+    /// directives left, unless `default_role` is set, whose registration
+    /// ends with the document (decision 14).
+    pub roles_after: roles::RoleTable,
 }
+
+pub use roles::SphinxCrash;
 
 /// Parse RST source into a doctree. Never errors — problems become
 /// `system_message` nodes, exactly like docutils — and never panics in
@@ -789,7 +975,14 @@ pub fn parse_rst(source: &str, opts: &ParseOptions) -> Doctree {
 }
 
 pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
-    let mut parser = block::BlockParser::new(source, &opts.source_path);
+    // Sphinx's reader decorates the input with `rst_prolog` and
+    // `rst_epilog` before the state machine runs ([`prolog`]).
+    let decoration = if opts.sphinx {
+        prolog::Decoration::of(&opts.read)
+    } else {
+        prolog::Decoration::default()
+    };
+    let mut parser = block::BlockParser::new(source, &opts.source_path, decoration);
     parser.sphinx = opts.sphinx;
     parser.docname = opts.docname.clone();
     parser.found_docs = opts.found_docs.clone();
@@ -808,7 +1001,76 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     if opts.trace_ids {
         parser.state.ids.enable_trace();
     }
+    parser.state.parse.roles = opts.roles.clone();
+    if opts.sphinx {
+        start_default_role(&mut parser.state, opts, parser.default_domain);
+        // `RSTParser.decorate` runs before the state machine: on a prolog or
+        // an epilog that is true and no `str`, it raises before any record
+        // of the document, after the default role's (decision 13).
+        if let Some(type_name) = &opts.read.decoration_crash {
+            parser.state.raise(
+                SphinxCrash::python(
+                    "AttributeError",
+                    format!("'{type_name}' object has no attribute 'splitlines'"),
+                    LogLocation::Doc,
+                ),
+                0,
+                0,
+            );
+        }
+    }
     parser.parse_document_full()
+}
+
+/// What a Sphinx read does with `default_role` before it parses the
+/// document ([RC §4.2]): `env.prepare_settings` makes it the document's
+/// default role (`current_document.default_role`), and
+/// `sphinx.util.rst.default_role(docname, name)` looks it up like any role
+/// name — through Sphinx's dispatcher, its INFO going to a reporter that
+/// prints nothing — and registers what it finds as `''`, or warns
+/// `default role X not found` at the document
+/// (`SP/sphinx/util/rst.py:65-77`). The registration ends with the
+/// document ([`ParseOutput::roles_after`]).
+///
+/// The lookup runs inside `sphinx_domains` but before `source-read`, where
+/// intersphinx installs the dispatcher that claims the `external:` names
+/// (`SP/sphinx/util/docutils.py:886-898`,
+/// `SP/sphinx/ext/intersphinx/__init__.py:81`). So an `:external:` role is
+/// an unknown domain's role here, even with `sphinx.ext.intersphinx`
+/// loaded.
+fn start_default_role(
+    state: &mut DocumentState,
+    opts: &ParseOptions,
+    default_domain: Option<roles::DomainId>,
+) {
+    let Some(name) = opts
+        .read
+        .default_role
+        .as_deref()
+        .filter(|name| !name.is_empty())
+    else {
+        return;
+    };
+    state.parse.default_role = Some(name.to_string());
+    let table = opts
+        .roles
+        .clone()
+        .unwrap_or_else(|| roles::RoleTable::builtin(true));
+    let ctx = roles::DispatchCtx {
+        sphinx: true,
+        default_domain,
+        intersphinx: false,
+    };
+    match roles::resolve_role(&table, &ctx, name, state) {
+        roles::Resolution::Found { role, .. } => {
+            let mut table = std::sync::Arc::unwrap_or_clone(table);
+            table.set_default(Some(role));
+            state.parse.roles = Some(std::sync::Arc::new(table));
+        }
+        roles::Resolution::NotFound { .. } => {
+            state.log_warning(format!("default role {name} not found"), LogLocation::Doc);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2316,7 +2578,7 @@ pub(crate) mod tests {
         ];
         for (location, expected) in rows {
             assert_eq!(
-                location.render(&sources, srcdir, "index"),
+                location.render(&sources, srcdir, "index", ".rst"),
                 expected,
                 "{location:?}"
             );
@@ -2332,12 +2594,53 @@ pub(crate) mod tests {
             seq: 0,
         };
         assert_eq!(
-            warning.diagnostic(&sources, srcdir, "index").render(true),
+            warning
+                .diagnostic(&sources, srcdir, "index", ".rst")
+                .render(true),
             format!(
                 "{}:12: WARNING: non-whitespace stripped by dedent",
                 under("part.rst.rst")
             )
         );
+    }
+
+    /// `doc2path` with a `source_suffix` other than `.rst` first
+    /// (`Project.doc2path`, `SP/sphinx/project.py:114-128`): the document's
+    /// own name is the file it was discovered in, `notes.txt` whatever
+    /// comes first, and a tuple's source path, no document's name, takes
+    /// the first suffix, `.rst` or `.txt`. Probed on Sphinx 9.1.0
+    /// (`scratchpad/t17c/p3_misc.py`, `loc_rst_first`, `loc_txt_first`).
+    #[test]
+    fn logger_locations_name_the_discovered_file_and_the_first_suffix() {
+        use crate::diagnostics::Location;
+        let srcdir = std::path::Path::new("/src");
+        let sources = ["/src/notes.txt".to_string(), "part.inc".to_string()];
+        let path = |path: &str, line: Option<u32>| Location::Path {
+            path: path.to_string(),
+            line,
+        };
+        let under = |name: &str| srcdir.join(name).display().to_string();
+        for first in [".rst", ".txt"] {
+            let rows = [
+                (LogLocation::Doc, path(&under("notes.txt"), None)),
+                (LogLocation::DocLine(9), path(&under("notes.txt"), Some(9))),
+                (
+                    LogLocation::Tuple { source: 0, line: 4 },
+                    path(&format!("/src/notes.txt{first}"), Some(4)),
+                ),
+                (
+                    LogLocation::Tuple { source: 1, line: 2 },
+                    path(&under(&format!("part.inc{first}")), Some(2)),
+                ),
+            ];
+            for (location, expected) in rows {
+                assert_eq!(
+                    location.render(&sources, srcdir, "notes", first),
+                    expected,
+                    "{location:?}, {first} first"
+                );
+            }
+        }
     }
 
     /// A node location is the source made absolute as `os.path.abspath`
@@ -2402,7 +2705,7 @@ pub(crate) mod tests {
             (LogLocation::DocLine(2), path(&under("index.rst"), Some(2))),
         ] {
             assert_eq!(
-                location.render(&sources, srcdir, "index"),
+                location.render(&sources, srcdir, "index", ".rst"),
                 expected,
                 "{location:?}"
             );
@@ -3162,51 +3465,70 @@ pub(crate) mod tests {
         );
     }
 
-    /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
-    /// fixtures carry steer no parse.
-    fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {
-        let mut py = crate::py::PySigConfig::default();
-        let flag = |key: &str, value: &Value| {
-            value
-                .as_bool()
-                .unwrap_or_else(|| panic!("conf key {key}: expected a bool, got {value}"))
+    /// A fixture's `source_suffix` reads as `conf.py`'s does when it is a
+    /// string, a list or a dict of one suffix. A dict of several is
+    /// refused: the generators write the fixtures with sorted keys
+    /// (`sort_keys=True`), which loses the order Sphinx read the dict in,
+    /// and so its first suffix.
+    #[test]
+    fn a_fixture_source_suffix_dict_of_several_suffixes_is_refused() {
+        let suffixes = |value: Value| {
+            let mut read = ReadConfig::default();
+            read.apply_conf_key("source_suffix", &value)
+                .map(|mapped| (mapped, read.source_suffix))
         };
+        let owned = |suffixes: &[&str]| suffixes.iter().map(|s| s.to_string()).collect();
+        assert_eq!(suffixes(json!(".txt")), Ok((true, owned(&[".txt"]))));
+        assert_eq!(
+            suffixes(json!([".txt", ".rst"])),
+            Ok((true, owned(&[".txt", ".rst"])))
+        );
+        assert_eq!(
+            suffixes(json!({".txt": "restructuredtext"})),
+            Ok((true, owned(&[".txt"])))
+        );
+        assert_eq!(
+            suffixes(json!({".txt": "restructuredtext", ".rst": null})),
+            Err(
+                "conf key source_suffix: a dict of 2 suffixes cannot be read from an oracle \
+                 fixture: its keys are sorted, which loses the order Sphinx read them in, and \
+                 with it the first suffix"
+                    .to_string()
+            )
+        );
+    }
+
+    /// The parse configuration a fixture's `conf` sets, through the
+    /// crate's own mappers ([`crate::py::PySigConfig::apply_conf_key`],
+    /// [`ReadConfig::apply_conf_key`]); the other keys the fixtures carry
+    /// steer no parse.
+    fn conf_of(conf: &serde_json::Map<String, Value>) -> (crate::py::PySigConfig, ReadConfig) {
+        let mut py = crate::py::PySigConfig::default();
+        let mut read = ReadConfig::default();
         for (key, value) in conf {
-            match key.as_str() {
-                "maximum_signature_line_length" => {
-                    py.maximum_signature_line_length = value.as_i64()
-                }
-                "python_maximum_signature_line_length" => {
-                    py.python_maximum_signature_line_length = value.as_i64();
-                }
-                "python_trailing_comma_in_multi_line_signatures" => {
-                    py.python_trailing_comma_in_multi_line_signatures = flag(key, value);
-                }
-                "python_display_short_literal_types" => {
-                    py.python_display_short_literal_types = flag(key, value);
-                }
-                "python_use_unqualified_type_names" => {
-                    py.python_use_unqualified_type_names = flag(key, value);
-                }
-                "toc_object_entries" => py.toc_object_entries = flag(key, value),
-                "toc_object_entries_show_parents" => {
-                    py.toc_object_entries_show_parents =
-                        value.as_str().expect("a string value").to_string();
-                }
-                "add_function_parentheses" => py.add_function_parentheses = flag(key, value),
-                "add_module_names" => py.add_module_names = flag(key, value),
-                "strip_signature_backslash" => py.strip_signature_backslash = flag(key, value),
+            let mapped = py
+                .apply_conf_key(key, value)
+                .and_then(|mapped| match mapped {
+                    true => Ok(true),
+                    false => read.apply_conf_key(key, value),
+                })
+                .unwrap_or_else(|error| panic!("{error}"));
+            let inert = matches!(
+                key.as_str(),
                 "smartquotes"
-                | "keep_warnings"
-                | "nitpicky"
-                | "numfig"
-                | "numfig_format"
-                | "numfig_secnum_depth"
-                | "modindex_common_prefix" => {}
-                other => panic!("unmapped conf key {other:?}: map it onto the parse options"),
-            }
+                    | "keep_warnings"
+                    | "nitpicky"
+                    | "numfig"
+                    | "numfig_format"
+                    | "numfig_secnum_depth"
+                    | "modindex_common_prefix"
+            );
+            assert!(
+                mapped || inert,
+                "unmapped conf key {key:?}: map it onto the parse options"
+            );
         }
-        py
+        (py, read)
     }
 
     fn fixture(name: &str) -> Value {
@@ -3260,11 +3582,10 @@ pub(crate) mod tests {
         for case in sphinx["cases"].as_array().expect("cases") {
             let name = case["name"].as_str().expect("name");
             let source = case["rst"].as_str().expect("rst");
+            let (py, read) = case["conf"].as_object().map(conf_of).unwrap_or_default();
             let options = ParseOptions {
-                py: case["conf"]
-                    .as_object()
-                    .map(py_config_of)
-                    .unwrap_or_default(),
+                py,
+                read,
                 ..sphinx_options()
             };
             visit(Corpus::Sphinx, name, parse_rst_full(source, &options));
@@ -3293,7 +3614,7 @@ pub(crate) mod tests {
             }
             let found_docs: std::collections::BTreeSet<String> = files.keys().cloned().collect();
             let found_docs = std::sync::Arc::new(found_docs);
-            let py = py_config_of(project["conf"].as_object().expect("conf"));
+            let (py, read) = conf_of(project["conf"].as_object().expect("conf"));
             for (docname, body) in files {
                 let path = srcdir.join(format!("{docname}.rst"));
                 let options = ParseOptions {
@@ -3302,6 +3623,7 @@ pub(crate) mod tests {
                     docname: docname.clone(),
                     found_docs: Some(std::sync::Arc::clone(&found_docs)),
                     py: py.clone(),
+                    read: read.clone(),
                     srcdir: Some(srcdir.to_path_buf()),
                     ..Default::default()
                 };
@@ -3702,9 +4024,10 @@ pub(crate) mod tests {
     use super::roles::tests::{parse as read_parse, read_tree};
 
     /// The pformat of the post-read tree of `source` read as `<SRC>/index.rst`
-    /// under `read`, `keep_warnings = True`, as the probes read it: what a
-    /// transform changes, such as the classes ClassAttribute (210) places,
-    /// shows there and not in the parse ([`read_tree`]).
+    /// under `read`, `keep_warnings = True` and smart quotes off, as the
+    /// probes read it: what a transform changes, such as the classes
+    /// ClassAttribute (210) places, shows there and not in the parse
+    /// ([`read_tree`]).
     fn read_post(source: &str, read: ReadConfig) -> String {
         let options = ParseOptions {
             source_path: "<SRC>/index.rst".to_string(),
@@ -3715,6 +4038,7 @@ pub(crate) mod tests {
         };
         let settings = crate::read::ReadSettings {
             keep_warnings: true,
+            smartquotes: None,
             ..crate::read::ReadSettings::sphinx_defaults()
         };
         crate::read::read_standalone(source, &options, &settings)
@@ -3722,6 +4046,44 @@ pub(crate) mod tests {
             .doctree()
             .root
             .pformat()
+    }
+
+    /// `math_number_all` (`config.py:282`): the math directive labels an
+    /// equation that has no label `<docname>:<n>` and numbers it, as it
+    /// does one whose label is empty; off, it stays unlabelled. Probed on
+    /// Sphinx 9.1.0 (post-read: `label="index:0"`, `number="1"`, its
+    /// target, and the labelled one after it numbered 2).
+    #[test]
+    fn math_number_all_labels_every_equation() {
+        let source = ".. math:: x^2\n\n.. math:: y^2\n   :label: why\n";
+        let on = read_post(
+            source,
+            ReadConfig {
+                math_number_all: true,
+                ..ReadConfig::default()
+            },
+        );
+        assert!(
+            on.contains(
+                "    <target refid=\"equation-index-0\">\n    <math_block docname=\"index\" \
+                 ids=\"equation-index-0\" label=\"index:0\" no-wrap=\"0\" nowrap=\"0\" \
+                 number=\"1\" xml:space=\"preserve\">"
+            ),
+            "{on}"
+        );
+        assert!(
+            on.contains("label=\"why\" no-wrap=\"0\" nowrap=\"0\" number=\"2\""),
+            "{on}"
+        );
+        let off = read_post(source, ReadConfig::default());
+        assert!(
+            off.contains("<math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\""),
+            "{off}"
+        );
+        assert!(
+            off.contains("label=\"why\" no-wrap=\"0\" nowrap=\"0\" number=\"1\""),
+            "{off}"
+        );
     }
 
     /// The `ParseLogWarning`s of a parse, as `(message, location)`.
@@ -3828,18 +4190,19 @@ pub(crate) mod tests {
         let expected = "<document source=\"<SRC>/index.rst\">\n    <paragraph>\n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                f()\n         \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"C\" reftype=\"class\" refwarn=\"0\">\n            <literal classes=\"xref py py-class\">\n                C\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r2\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r2\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"index\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                index\n";
         assert_eq!(read_tree(source, ReadConfig::default()), expected);
 
+        // The std domain's `productionlist` (T18c) answers to both
+        // spellings.
+        for name in ["std:productionlist", "productionlist"] {
+            let out = read_parse(&format!(".. {name}:: x: y\n"), ReadConfig::default());
+            assert!(logged(&out).is_empty(), "{name}");
+            assert!(tree_messages(&out).is_empty(), "{name}");
+            let kinds: Vec<&str> = out.doctree.root.children.iter().map(|n| n.kind).collect();
+            assert_eq!(kinds, ["productionlist"], "{name}");
+        }
         // The c, cpp, js and rst domains are registered, so their prefixes
         // log nothing, but this crate implements none of their directives
-        // (decision 16), and `productionlist` waits for T18c in both
-        // spellings: each keeps `Unknown directive type`.
-        for name in [
-            "c:function",
-            "cpp:class",
-            "js:function",
-            "rst:directive",
-            "std:productionlist",
-            "productionlist",
-        ] {
+        // (decision 16): each keeps `Unknown directive type`.
+        for name in ["c:function", "cpp:class", "js:function", "rst:directive"] {
             let out = read_parse(&format!(".. {name}:: x\n"), ReadConfig::default());
             assert!(logged(&out).is_empty(), "{name}");
             let texts: Vec<String> = tree_messages(&out)
@@ -3962,7 +4325,7 @@ pub(crate) mod tests {
         let sources = ["/src/index.rst".to_string()];
         assert_eq!(
             warning
-                .diagnostic(&sources, std::path::Path::new("/src"), "index")
+                .diagnostic(&sources, std::path::Path::new("/src"), "index", ".rst")
                 .render(true),
             "/src/index.rst.rst:3: WARNING: line number spec is out of range(1-2): '1,99'"
         );
@@ -4123,8 +4486,12 @@ pub(crate) mod tests {
         .map(|(key, diagnostic)| (key.seq, diagnostic.render(true)))
         .collect();
         keyed.extend(out.registry.log_warnings.iter().map(|warning| {
-            let diagnostic =
-                warning.diagnostic(&out.doctree.sources, std::path::Path::new("<SRC>"), "index");
+            let diagnostic = warning.diagnostic(
+                &out.doctree.sources,
+                std::path::Path::new("<SRC>"),
+                "index",
+                ".rst",
+            );
             (warning.seq, diagnostic.render(true))
         }));
         keyed.sort_by_key(|(seq, _)| *seq);

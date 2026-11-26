@@ -321,25 +321,28 @@ pub(crate) fn py_split(s: &str) -> impl Iterator<Item = &str> {
     s.split(py_isspace).filter(|w| !w.is_empty())
 }
 
-/// `Project.path2doc` (`sphinx/project.py:114-128`) against Sphinx's
-/// *default* `source_suffix` — `{'.rst': 'restructuredtext'}`
-/// (`config.py:243`): the docname a source file under `srcdir` maps to, or
-/// `None` for anything else.
+/// `Project.path2doc` (`sphinx/project.py:94-112`) against
+/// `source_suffix`'s suffixes, in order: the docname a source file under
+/// `srcdir` maps to, the path less the first suffix its name ends with, or
+/// `None` when it ends with none. The consumers, `env.included` and the
+/// orphan check behind it, record what Sphinx records: under the default
+/// `['.rst']` an included `.txt` maps to no document, under `['.rst',
+/// '.txt']` to one.
 ///
-/// Deliberately narrower than this crate's discovery (which also admits
-/// `.md`/`.txt`): the consumers — `env.included` bookkeeping and the orphan
-/// check behind it — must match what Sphinx records, and Sphinx's default
-/// project never maps a `.txt` include target to a document.
-///
-/// One knowing simplification: for a `.rst` OUTSIDE `srcdir` sphinx's
+/// One knowing simplification: for a file OUTSIDE `srcdir` sphinx's
 /// `relative_to` fails and the absolute path itself becomes the "docname"
 /// (`'/base/ext/part'`, probed) — a name no document can have, so the
 /// orphan check ignores it. `None` here has the same effect, and keeps
 /// `env.included` free of environment-specific absolute paths.
-pub fn path2doc(path: &Path, srcdir: &Path) -> Option<String> {
+pub fn path2doc(path: &Path, srcdir: &Path, source_suffix: &[String]) -> Option<String> {
     let rel = path.strip_prefix(srcdir).ok()?;
     let rel = rel.to_str()?.replace('\\', "/");
-    Some(rel.strip_suffix(".rst")?.to_string())
+    let name = rel.rsplit('/').next().unwrap_or(&rel);
+    let suffix = source_suffix
+        .iter()
+        .find(|suffix| name.ends_with(suffix.as_str()))?;
+    let docname = &rel[..rel.len() - suffix.len()];
+    (!docname.is_empty()).then(|| docname.to_string())
 }
 
 #[derive(Debug)]
@@ -697,23 +700,37 @@ mod path_tests {
         );
     }
 
-    /// Sphinx's default `source_suffix` is `.rst` alone; this crate's wider
-    /// discovery (`.md`/`.txt`) deliberately does not leak into the
-    /// `env.included` bookkeeping this helper feeds.
+    /// Under Sphinx's default `source_suffix`, `['.rst']`, only a `.rst`
+    /// under the source directory maps to a document; with `.txt` named
+    /// too, a `.txt` does, the first suffix its name ends with dropped.
     #[test]
-    fn path2doc_maps_rst_under_srcdir_and_nothing_else() {
+    fn path2doc_maps_the_configured_suffixes_under_srcdir_and_nothing_else() {
         let srcdir = Path::new("/src");
+        let rst = [".rst".to_string()];
         assert_eq!(
-            path2doc(Path::new("/src/part.rst"), srcdir),
+            path2doc(Path::new("/src/part.rst"), srcdir, &rst),
             Some("part".into())
         );
         assert_eq!(
-            path2doc(Path::new("/src/sub/abs_part.rst"), srcdir),
+            path2doc(Path::new("/src/sub/abs_part.rst"), srcdir, &rst),
             Some("sub/abs_part".into())
         );
-        assert_eq!(path2doc(Path::new("/src/data.txt"), srcdir), None);
-        assert_eq!(path2doc(Path::new("/src/notes.md"), srcdir), None);
-        assert_eq!(path2doc(Path::new("/elsewhere/part.rst"), srcdir), None);
+        assert_eq!(path2doc(Path::new("/src/data.txt"), srcdir, &rst), None);
+        assert_eq!(path2doc(Path::new("/src/notes.md"), srcdir, &rst), None);
+        assert_eq!(
+            path2doc(Path::new("/elsewhere/part.rst"), srcdir, &rst),
+            None
+        );
+        let rst_txt = [".rst".to_string(), ".txt".to_string()];
+        assert_eq!(
+            path2doc(Path::new("/src/data.txt"), srcdir, &rst_txt),
+            Some("data".into())
+        );
+        let txt_first = [".txt".to_string(), ".rst.txt".to_string()];
+        assert_eq!(
+            path2doc(Path::new("/src/page.rst.txt"), srcdir, &txt_first),
+            Some("page.rst".into())
+        );
     }
 
     /// `_relative_path(abs_fn, srcdir)`: inside the tree it is the plain

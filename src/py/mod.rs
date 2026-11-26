@@ -115,6 +115,59 @@ impl PySigConfig {
     }
 }
 
+impl PySigConfig {
+    /// Sets the key `key` of an oracle fixture's `conf` dict (JSON, the
+    /// confoverrides its generator applied) on this configuration, when it
+    /// is one of its keys: `Ok(true)` once set, `Ok(false)` for a key that
+    /// is not, and an error naming the key for a value of the wrong shape
+    /// — a non-integer line length included, never read as no limit.
+    pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
+        use serde_json::Value;
+        let line_length = |value: &Value| match value {
+            Value::Null => Ok(None),
+            Value::Number(number) => number
+                .as_i64()
+                .map(Some)
+                .ok_or_else(|| format!("conf key {key}: non-integer number {number}")),
+            other => Err(format!("conf key {key}: expected integer, got {other}")),
+        };
+        let flag = |value: &Value| {
+            value
+                .as_bool()
+                .ok_or_else(|| format!("conf key {key}: expected bool, got {value}"))
+        };
+        match key {
+            "maximum_signature_line_length" => {
+                self.maximum_signature_line_length = line_length(value)?;
+            }
+            "python_maximum_signature_line_length" => {
+                self.python_maximum_signature_line_length = line_length(value)?;
+            }
+            "python_trailing_comma_in_multi_line_signatures" => {
+                self.python_trailing_comma_in_multi_line_signatures = flag(value)?;
+            }
+            "python_display_short_literal_types" => {
+                self.python_display_short_literal_types = flag(value)?;
+            }
+            "python_use_unqualified_type_names" => {
+                self.python_use_unqualified_type_names = flag(value)?;
+            }
+            "toc_object_entries" => self.toc_object_entries = flag(value)?,
+            "toc_object_entries_show_parents" => {
+                self.toc_object_entries_show_parents = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))?;
+            }
+            "add_function_parentheses" => self.add_function_parentheses = flag(value)?,
+            "add_module_names" => self.add_module_names = flag(value)?,
+            "strip_signature_backslash" => self.strip_signature_backslash = flag(value)?,
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+}
+
 impl From<&crate::config::BuildConfig> for PySigConfig {
     fn from(config: &crate::config::BuildConfig) -> Self {
         Self {

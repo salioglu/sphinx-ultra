@@ -20,6 +20,8 @@ use crate::env::toctree::docname_join;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 use crate::intersphinx::{self, Diagnostic, HookOutcome, Intersphinx, XrefQuery};
+use crate::pyformat::{self, FormatError, Value};
+use crate::rst::SphinxCrash;
 use crate::utils::py_repr_str;
 
 /// One `pending_xref` to resolve — the attributes Sphinx's resolvers read
@@ -57,6 +59,16 @@ pub enum XrefOutcome {
     /// Nothing found: the caller decides whether this warrants a
     /// dangling-reference warning.
     Missing,
+    /// A reference node replaces the `pending_xref`, and the resolver
+    /// logged `warning` on its way (`Invalid math_eqref_format`), which
+    /// carries no `type`/`subtype`.
+    ResolvedWarning {
+        resolved: ResolvedXref,
+        warning: String,
+    },
+    /// The resolver raised what Sphinx 9.1.0 crashes on (decision 13),
+    /// which the caller locates at the reference.
+    Crash(SphinxCrash),
 }
 
 /// The reference node a successful resolution builds.
@@ -100,6 +112,9 @@ pub struct Resolver<'a> {
     pub env: &'a BuildEnvironment,
     pub numfig: bool,
     pub numfig_format: &'a BTreeMap<String, String>,
+    /// The math domain's configuration values
+    /// ([`crate::env::math::MathConfig`]).
+    pub math: crate::env::math::MathConfig,
     /// A document's doctree, for `:numref:`'s target-node lookup
     /// (`env.get_doctree(docname).ids`).
     pub doctree: &'a dyn Fn(&str) -> Option<Cow<'a, Doctree>>,
@@ -160,14 +175,21 @@ impl Resolver<'_> {
     /// its target's id, with its number, `(N)`, in place of the content
     /// node.
     fn resolve_math(&self, req: &XrefRequest<'_>) -> XrefOutcome {
-        match crate::env::math::resolve_xref(self.env, self.numfig, req.reftarget) {
-            Some(target) => {
+        match crate::env::math::resolve_xref(self.env, self.numfig, &self.math, req.reftarget) {
+            Err(crash) => XrefOutcome::Crash(crash),
+            Ok(Some(target)) => {
                 let mut node =
                     self.make_refnode(req.fromdoc, target.docname, Some(&target.node_id));
                 node.inner = Inner::Text(target.title);
-                XrefOutcome::Resolved(node)
+                match target.warning {
+                    Some(warning) => XrefOutcome::ResolvedWarning {
+                        resolved: node,
+                        warning,
+                    },
+                    None => XrefOutcome::Resolved(node),
+                }
             }
-            None => XrefOutcome::Missing,
+            Ok(None) => XrefOutcome::Missing,
         }
     }
 
@@ -278,34 +300,41 @@ impl Resolver<'_> {
         }
         let fignum: Vec<String> = fignumber.iter().map(u32::to_string).collect();
         let fignum = fignum.join(".");
-        let newtitle = if title.contains("{name}") || title.contains("number") {
+        let number = ("number", Value::Str(&fignum));
+        let formatted = if title.contains("{name}") || title.contains("number") {
             // New style (`Fig.{number}`). Sphinx passes `name` to `format`
             // only `if figname:` — a *truthiness* test, so an empty caption
             // is formatted without it, and a `{name}` in the title then
             // raises the KeyError below (the `figname is None` guard above
             // is the only None-ness test in this algorithm).
-            let named = figname.as_deref().filter(|figname| !figname.is_empty());
-            match format_new_style(&title, named, &fignum) {
-                Ok(newtitle) => newtitle,
-                Err(KeyError(key)) => {
-                    return XrefOutcome::Kept {
-                        warning: Some(format!(
-                            "invalid numfig_format: {title} (KeyError({}))",
-                            py_repr_str(&key)
-                        )),
-                    }
-                }
+            match figname.as_deref().filter(|figname| !figname.is_empty()) {
+                Some(figname) => pyformat::format(&title, &[("name", Value::Str(figname)), number]),
+                None => pyformat::format(&title, &[number]),
             }
         } else {
-            // Old style (`Fig.%s`).
-            match format_old_style(&title, &fignum) {
-                Ok(newtitle) => newtitle,
-                Err(TypeError) => {
-                    return XrefOutcome::Kept {
-                        warning: Some(format!("invalid numfig_format: {title}")),
-                    }
+            // Old style (`Fig.%s`): `title % fignum`.
+            pyformat::percent(&title, &fignum)
+        };
+        // `except KeyError` and `except TypeError` only: anything else
+        // either style raises crashes Sphinx. A value the port does not
+        // model reads as the `KeyError` it always has (T19b's divergence
+        // list).
+        let newtitle = match formatted {
+            Ok(newtitle) => newtitle,
+            Err(FormatError::KeyError(key) | FormatError::NotModelled(key)) => {
+                return XrefOutcome::Kept {
+                    warning: Some(format!(
+                        "invalid numfig_format: {title} (KeyError({}))",
+                        py_repr_str(&key)
+                    )),
                 }
             }
+            Err(FormatError::TypeError(_)) => {
+                return XrefOutcome::Kept {
+                    warning: Some(format!("invalid numfig_format: {title}")),
+                }
+            }
+            Err(FormatError::Crash(crash)) => return XrefOutcome::Crash(crash),
         };
 
         XrefOutcome::Resolved(self.build_reference_node(
@@ -529,13 +558,20 @@ impl Resolver<'_> {
     /// `CitationDomain.resolve_any_xref` (role `'ref'`),
     /// `MathDomain.resolve_any_xref` (role `'eq'`) and
     /// `PythonDomain.resolve_any_xref`.
+    ///
+    /// Also adds the warnings the walk's resolvers logged to `warnings`,
+    /// in order ([`any_candidate`]): Sphinx logs them during the walk,
+    /// whichever candidate wins, before any ambiguity warning. A resolver
+    /// that crashes Sphinx (decision 13) ends the walk with its crash,
+    /// after the warnings logged before it.
     fn resolve_any(
         &self,
         req: &XrefRequest<'_>,
         py_module: Option<&str>,
         py_class: Option<&str>,
         resolved_children: Option<&Vec<Node>>,
-    ) -> Vec<AnyCandidate> {
+        warnings: &mut Vec<String>,
+    ) -> Result<Vec<AnyCandidate>, SphinxCrash> {
         let mut results: Vec<AnyCandidate> = Vec::new();
         let mut push = |role: String, node: ResolvedXref| {
             // `_stringify`: `node.get('reftitle', node.astext())`.
@@ -548,10 +584,11 @@ impl Resolver<'_> {
         };
 
         // "first, try resolving as :doc:".
-        if let XrefOutcome::Resolved(node) = self.resolve_doc(&XrefRequest {
+        let doc = self.resolve_doc(&XrefRequest {
             reftype: "doc",
             ..*req
-        }) {
+        });
+        if let Some(node) = any_candidate(doc, warnings)? {
             push("doc".to_string(), node);
         }
 
@@ -560,17 +597,19 @@ impl Resolver<'_> {
         // automatically", so the any walk hands it the lowercased form;
         // "do not try 'keyword'".
         let ltarget = req.reftarget.to_lowercase();
-        if let XrefOutcome::Resolved(node) = self.resolve_ref(&XrefRequest {
+        let reference = self.resolve_ref(&XrefRequest {
             reftype: "ref",
             reftarget: &ltarget,
             ..*req
-        }) {
+        });
+        if let Some(node) = any_candidate(reference, warnings)? {
             push("std:ref".to_string(), node);
         }
-        if let XrefOutcome::Resolved(node) = self.resolve_option(&XrefRequest {
+        let option = self.resolve_option(&XrefRequest {
             reftype: "option",
             ..*req
-        }) {
+        });
+        if let Some(node) = any_candidate(option, warnings)? {
             push("std:option".to_string(), node);
         }
         for (objtype, role) in STD_OBJECT_TYPE_ROLES {
@@ -594,11 +633,13 @@ impl Resolver<'_> {
         }
 
         // CitationDomain and MathDomain.resolve_any_xref: each its
-        // `resolve_xref`, under the role it reports.
-        if let XrefOutcome::Resolved(node) = self.resolve_citation(req) {
+        // `resolve_xref`, under the role it reports. The math domain's
+        // warns about a `math_eqref_format` it cannot fill and still
+        // resolves.
+        if let Some(node) = any_candidate(self.resolve_citation(req), warnings)? {
             push("ref".to_string(), node);
         }
-        if let XrefOutcome::Resolved(node) = self.resolve_math(req) {
+        if let Some(node) = any_candidate(self.resolve_math(req), warnings)? {
             push("eq".to_string(), node);
         }
 
@@ -613,7 +654,7 @@ impl Resolver<'_> {
             let node = self.py_refnode(req.fromdoc, target, resolved_children.cloned());
             push(role, node);
         }
-        results
+        Ok(results)
     }
 
     /// `StandardDomain.build_reference_node` (`:1002-1032`), which replaces
@@ -683,6 +724,32 @@ struct AnyCandidate {
     label: String,
 }
 
+/// The node one resolver of the `:any:` walk ([`Resolver::resolve_any`])
+/// built, if any. A warning it logged on the way is added to `warnings`,
+/// because Sphinx logs it during the walk whether or not that candidate
+/// wins: a [`XrefOutcome::ResolvedWarning`] still yields its node. No
+/// resolver of the walk keeps its content node (only `:numref:` does, and
+/// the walk never calls it), so a [`XrefOutcome::Kept`] adds no candidate.
+/// A resolver that crashed ends the walk with its crash.
+fn any_candidate(
+    outcome: XrefOutcome,
+    warnings: &mut Vec<String>,
+) -> Result<Option<ResolvedXref>, SphinxCrash> {
+    Ok(match outcome {
+        XrefOutcome::Resolved(node) => Some(node),
+        XrefOutcome::ResolvedWarning { resolved, warning } => {
+            warnings.push(warning);
+            Some(resolved)
+        }
+        XrefOutcome::Kept { warning } => {
+            warnings.extend(warning);
+            None
+        }
+        XrefOutcome::Missing => None,
+        XrefOutcome::Crash(crash) => return Err(crash),
+    })
+}
+
 /// The label a reference resolved to, as `build_reference_node` takes it.
 struct LabelTarget<'a> {
     fromdoc: &'a str,
@@ -693,80 +760,6 @@ struct LabelTarget<'a> {
 /// Sphinx's `ValueError` out of `get_fignumber`.
 #[derive(Debug)]
 struct NoNumber;
-
-/// Python's `KeyError` out of `str.format`, carrying the missing field.
-#[derive(Debug)]
-struct KeyError(String);
-
-/// Python's `TypeError` out of `%`-formatting.
-#[derive(Debug)]
-struct TypeError;
-
-/// `title.format(name=..., number=...)` for the fields numfig formats can
-/// name. Any other `{field}` is Python's `KeyError`.
-fn format_new_style(title: &str, figname: Option<&str>, fignum: &str) -> Result<String, KeyError> {
-    let mut out = String::with_capacity(title.len());
-    let mut rest = title;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('}') else {
-            // An unbalanced `{` is a ValueError in Python; Sphinx does not
-            // catch it. Ours keeps the text as written rather than crashing
-            // the build.
-            out.push_str(&rest[open..]);
-            return Ok(out);
-        };
-        let field = &after[..close];
-        match field {
-            // `title.format(number=fignum)` is called *without* `name` when
-            // there is no figname, so `{name}` is a KeyError then.
-            "name" => match figname {
-                Some(figname) => out.push_str(figname),
-                None => return Err(KeyError("name".to_string())),
-            },
-            "number" => out.push_str(fignum),
-            other => return Err(KeyError(other.to_string())),
-        }
-        rest = &after[close + 1..];
-    }
-    out.push_str(rest);
-    Ok(out)
-}
-
-/// `title % fignum` for a single string argument: exactly one `%s`
-/// conversion, or Python raises `TypeError` — too few ("not enough
-/// arguments") and too many ("not all arguments converted") both land on
-/// the same warning. Any other conversion is reported as an invalid format
-/// too; `%r` would in fact work in Python, but no `numfig_format` uses it
-/// and guessing at the rest of `%`-formatting would be worse than saying
-/// the format is unusable.
-fn format_old_style(title: &str, fignum: &str) -> Result<String, TypeError> {
-    let mut out = String::with_capacity(title.len());
-    let mut rest = title;
-    let mut conversions = 0usize;
-    while let Some(percent) = rest.find('%') {
-        out.push_str(&rest[..percent]);
-        let mut chars = rest[percent + 1..].chars();
-        match chars.next() {
-            Some('%') => out.push('%'),
-            Some('s') => {
-                conversions += 1;
-                out.push_str(fignum);
-            }
-            // `%d` with a string argument, or a trailing bare `%`, is a
-            // TypeError/ValueError; either way Sphinx logs #13.
-            _ => return Err(TypeError),
-        }
-        rest = &rest[percent + 2..];
-    }
-    if conversions != 1 {
-        // "not all arguments converted during string formatting".
-        return Err(TypeError);
-    }
-    out.push_str(rest);
-    Ok(out)
-}
 
 /// `ws_re.split(target, maxsplit=1)`: the first whitespace run splits the
 /// leading word off. `ws_re` is `\s+`, Python's `str.isspace` — so a
@@ -828,6 +821,23 @@ pub struct DocumentResolution {
     /// every `refdomain` outside `{"", "std", "py", "citation", "math"}`
     /// (`c:`, `cpp:`, `js:`, ...) — counted rather than warned about.
     pub unresolvable_domain_refs: usize,
+    /// The reference whose resolution crashes Sphinx 9.1.0 (decision 13),
+    /// located at it: the walk stops there, after the warnings of the
+    /// references before it.
+    pub crash: Option<SphinxCrash>,
+}
+
+impl DocumentResolution {
+    /// Keeps `crash` in [`Self::crash`], raised resolving the reference at
+    /// `path` and `line`, located there as a warning about it is.
+    fn raise_at(&mut self, crash: SphinxCrash, path: &Path, line: Option<usize>) {
+        self.crash = Some(crash.rendered_at(crate::diagnostics::location_of(path, line)));
+    }
+
+    /// Whether a reference's resolution crashed ([`Self::raise_at`]).
+    fn crashed(&self) -> bool {
+        self.crash.is_some()
+    }
 }
 
 /// Resolve every `pending_xref` in one document, rewriting the tree the way
@@ -905,6 +915,9 @@ fn resolve_children(
     inherited: Location,
     out: &mut DocumentResolution,
 ) {
+    if out.crashed() {
+        return;
+    }
     let location = if contributes_location(node) {
         Some((node.span.source, node.span.line))
     } else {
@@ -915,16 +928,19 @@ fn resolve_children(
             resolver, nitpick, docname, child, sources, path, location, out,
         );
     }
-    if !node
-        .children
-        .iter()
-        .any(|child| child.kind == kinds::PENDING_XREF)
+    if out.crashed()
+        || !node
+            .children
+            .iter()
+            .any(|child| child.kind == kinds::PENDING_XREF)
     {
         return;
     }
     let children = std::mem::take(&mut node.children);
     for mut child in children {
-        if child.kind != kinds::PENDING_XREF {
+        // Sphinx's resolution stops at a reference that crashes it
+        // (decision 13): the ones after it stay as they are.
+        if child.kind != kinds::PENDING_XREF || out.crashed() {
             node.children.push(child);
             continue;
         }
@@ -1144,10 +1160,51 @@ fn resolve_one(
         program: program.as_deref(),
         contnode_text: &contnode_text,
     };
-    let outcome = resolver.resolve_in_domain(&refdomain, &req);
+    let mut outcome = resolver.resolve_in_domain(&refdomain, &req);
+    if outcome == XrefOutcome::Missing {
+        // The `missing-reference` event, which is where intersphinx hooks
+        // in: after the domain, before the warning.
+        let mut diagnostics = Vec::new();
+        let hook = resolver
+            .intersphinx
+            .resolve_detect(&query, &mut diagnostics);
+        report(out, diagnostics, line, path);
+        match hook {
+            HookOutcome::Resolved(resolution) => {
+                return vec![intersphinx_node(resolution, contnode, span)];
+            }
+            // The target named this project: the local domain again, with
+            // the prefix stripped, and Sphinx keeps whatever it returns
+            // (`post_transforms/__init__.py:140-155`), a warning or a kept
+            // content node included. A miss still reports the target as
+            // written, because Sphinx never rewrote it.
+            HookOutcome::SelfReferential(stripped) => {
+                outcome = resolver.resolve_in_domain(
+                    &refdomain,
+                    &XrefRequest {
+                        reftarget: &stripped,
+                        ..req
+                    },
+                );
+            }
+            HookOutcome::Missing => {}
+        }
+    }
 
     match outcome {
         XrefOutcome::Resolved(resolved) => {
+            vec![reference_node(resolved, contnode, span)]
+        }
+        XrefOutcome::ResolvedWarning { resolved, warning } => {
+            out.warnings.push(
+                BuildWarning::new(
+                    path.to_path_buf(),
+                    line,
+                    warning,
+                    WarningType::BrokenCrossReference,
+                )
+                .with_category(None),
+            );
             vec![reference_node(resolved, contnode, span)]
         }
         XrefOutcome::Kept { warning } => {
@@ -1164,35 +1221,11 @@ fn resolve_one(
             }
             contnode.into_iter().collect()
         }
+        XrefOutcome::Crash(crash) => {
+            out.raise_at(crash, path, line);
+            Vec::new()
+        }
         XrefOutcome::Missing => {
-            // The `missing-reference` event, which is where intersphinx
-            // hooks in: after the domain, before the warning.
-            let mut diagnostics = Vec::new();
-            let outcome = resolver
-                .intersphinx
-                .resolve_detect(&query, &mut diagnostics);
-            report(out, diagnostics, line, path);
-            match outcome {
-                HookOutcome::Resolved(resolution) => {
-                    return vec![intersphinx_node(resolution, contnode, span)];
-                }
-                // The target named this project: retry the local domain
-                // with the prefix stripped. The warning below still reports
-                // the target as written, because Sphinx never rewrote it.
-                HookOutcome::SelfReferential(stripped) => {
-                    let retry = resolver.resolve_in_domain(
-                        &refdomain,
-                        &XrefRequest {
-                            reftarget: &stripped,
-                            ..req
-                        },
-                    );
-                    if let XrefOutcome::Resolved(resolved) = retry {
-                        return vec![reference_node(resolved, contnode, span)];
-                    }
-                }
-                HookOutcome::Missing => {}
-            }
             if let Some(message) = missing_reference_warning(
                 resolver.env,
                 nitpick,
@@ -1373,7 +1406,8 @@ fn resolve_any_ref(
     // One resolution attempt over a target (the self-referential retry runs
     // the same code over the stripped spelling, ambiguity warning included).
     let attempt = |target: &str, out: &mut DocumentResolution| -> Option<Node> {
-        let mut results = resolver.resolve_any(
+        let mut warnings = Vec::new();
+        let walk = resolver.resolve_any(
             &XrefRequest {
                 reftarget: target,
                 ..req
@@ -1381,7 +1415,28 @@ fn resolve_any_ref(
             ctx.module,
             ctx.class,
             children.resolved.as_ref(),
+            &mut warnings,
         );
+        // What the walk's resolvers logged, at the reference: an `Invalid
+        // math_eqref_format`, which has no `type`/`subtype`.
+        for warning in warnings {
+            out.warnings.push(
+                BuildWarning::new(
+                    path.to_path_buf(),
+                    line,
+                    warning,
+                    WarningType::BrokenCrossReference,
+                )
+                .with_category(None),
+            );
+        }
+        let mut results = match walk {
+            Ok(results) => results,
+            Err(crash) => {
+                out.raise_at(crash, path, line);
+                return None;
+            }
+        };
         if results.is_empty() {
             return None;
         }
@@ -1427,6 +1482,9 @@ fn resolve_any_ref(
     if let Some(node) = attempt(query.reftarget, out) {
         return vec![node];
     }
+    if out.crashed() {
+        return Vec::new();
+    }
 
     // The `missing-reference` event: intersphinx's handler resolves `any`
     // by sweeping every domain's objtypes.
@@ -1440,6 +1498,9 @@ fn resolve_any_ref(
         HookOutcome::SelfReferential(stripped) => {
             if let Some(node) = attempt(&stripped, out) {
                 return vec![node];
+            }
+            if out.crashed() {
+                return Vec::new();
             }
         }
         HookOutcome::Missing => {}
@@ -1881,6 +1942,7 @@ mod tests {
             env,
             numfig: true,
             numfig_format,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| None,
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2108,6 +2170,7 @@ mod tests {
             env: &env,
             numfig: false,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2160,6 +2223,7 @@ mod tests {
             env: &env,
             numfig: true,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2205,6 +2269,7 @@ mod tests {
             env: &env,
             numfig: true,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2221,27 +2286,208 @@ mod tests {
         );
     }
 
+    /// `_resolve_numref_xref` formats a `numfig_format` and an explicit
+    /// title with `str.format`, which reads `{{` and `}}` as a literal brace
+    /// (`SP/sphinx/domains/std/__init__.py:1087-1170`). Probed on Sphinx
+    /// 9.1.0: `numfig_format = {'table': 'Tab. {{x}} {number}'}` and
+    /// ``:numref:`Pic {{n}} {number}}} <tbl>` `` give `Tab. {x} 1` and
+    /// `Pic {n} 1}`, with no warning.
     #[test]
-    fn numref_renders_both_format_styles_and_reports_broken_ones() {
-        assert_eq!(format_old_style("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
-        assert!(
-            format_old_style("Fig.", "1").is_err(),
-            "no conversion: TypeError"
+    fn doubled_braces_in_a_numref_format_are_literal_braces() {
+        let mut env = BuildEnvironment::default();
+        env.std.labels.insert(
+            "tbl".to_string(),
+            (
+                "index".to_string(),
+                "tbl".to_string(),
+                "The caption.".to_string(),
+            ),
         );
-        assert!(
-            format_old_style("%s %s", "1").is_err(),
-            "two conversions for one argument: TypeError"
+        env.toc_fignumbers.insert(
+            "index".to_string(),
+            BTreeMap::from([(
+                "table".to_string(),
+                BTreeMap::from([("tbl".to_string(), vec![1])]),
+            )]),
+        );
+        let mut table = Node::elem(kinds::TABLE, crate::doctree::Span::ZERO);
+        table.attrs.ids.push("tbl".to_string());
+        let mut root = Node::elem(kinds::DOCUMENT, crate::doctree::Span::ZERO);
+        root.children.push(table);
+        let doctree = Doctree {
+            root,
+            sources: vec!["<test>".to_string()],
+        };
+        let formats = BTreeMap::from([("table".to_string(), "Tab. {{x}} {number}".to_string())]);
+        let resolver = Resolver {
+            env: &env,
+            numfig: true,
+            numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
+            doctree: &|_| Some(Cow::Borrowed(&doctree)),
+            relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
+        };
+        let numbered = |title: Option<&str>, text: &str| {
+            XrefOutcome::Resolved(ResolvedXref {
+                kind: "number_reference",
+                refid: Some("tbl".to_string()),
+                refuri: None,
+                title: title.map(str::to_string),
+                reftitle: None,
+                inner: Inner::Inline {
+                    text: text.to_string(),
+                    classes: vec!["std".to_string(), "std-numref".to_string()],
+                },
+            })
+        };
+
+        assert_eq!(
+            resolver.resolve_xref(&request("index", "numref", "tbl")),
+            numbered(Some("Tab. {{x}} {number}"), "Tab. {x} 1")
+        );
+        let mut explicit = request("index", "numref", "tbl");
+        explicit.refexplicit = true;
+        explicit.contnode_text = "Pic {{n}} {number}}}";
+        assert_eq!(
+            resolver.resolve_xref(&explicit),
+            numbered(Some("Pic {{n}} {number}}}"), "Pic {n} 1}")
+        );
+    }
+
+    /// `_resolve_numref_xref` formats the rest of a field on the string its
+    /// keyword gives ([`pyformat::format`]): an index of digits fills the
+    /// character; a name in brackets raises the `TypeError` the resolver
+    /// catches, which warns `invalid numfig_format: <title>` without the
+    /// exception; and what else `str.format` raises but `KeyError` it does
+    /// not catch, so Sphinx 9.1.0 crashes (decision 13). Probed on Sphinx
+    /// 9.1.0 (`a_format_field_indexes_a_string_as_python_does`,
+    /// `invalid_new_style_format_exits_two`).
+    #[test]
+    fn a_numref_format_looks_up_the_rest_of_a_field_on_the_string() {
+        let mut env = BuildEnvironment::default();
+        env.std.labels.insert(
+            "tbl".to_string(),
+            ("index".to_string(), "tbl".to_string(), "Cap".to_string()),
+        );
+        env.toc_fignumbers.insert(
+            "index".to_string(),
+            BTreeMap::from([(
+                "table".to_string(),
+                BTreeMap::from([("tbl".to_string(), vec![1])]),
+            )]),
+        );
+        let mut table = Node::elem(kinds::TABLE, crate::doctree::Span::ZERO);
+        table.attrs.ids.push("tbl".to_string());
+        let mut root = Node::elem(kinds::DOCUMENT, crate::doctree::Span::ZERO);
+        root.children.push(table);
+        let doctree = Doctree {
+            root,
+            sources: vec!["<test>".to_string()],
+        };
+        let formats = BTreeMap::from([("table".to_string(), "Table {number.}".to_string())]);
+        let resolver = Resolver {
+            env: &env,
+            numfig: true,
+            numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
+            doctree: &|_| Some(Cow::Borrowed(&doctree)),
+            relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
+        };
+        let titled = |title: &'static str| XrefRequest {
+            refexplicit: true,
+            contnode_text: title,
+            ..request("index", "numref", "tbl")
+        };
+        let crash = |exception: &'static str, message: &str| {
+            XrefOutcome::Crash(SphinxCrash::python(
+                exception,
+                message.to_string(),
+                crate::rst::LogLocation::None,
+            ))
+        };
+
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {name[0]}{number[0]}")),
+            XrefOutcome::Resolved(ResolvedXref {
+                kind: "number_reference",
+                refid: Some("tbl".to_string()),
+                refuri: None,
+                title: Some("Tab {name[0]}{number[0]}".to_string()),
+                reftitle: None,
+                inner: Inner::Inline {
+                    text: "Tab C1".to_string(),
+                    classes: vec!["std".to_string(), "std-numref".to_string()],
+                },
+            })
+        );
+        // An index of decimal digits of any script (ARABIC-INDIC DIGIT ONE
+        // and ZERO) is one too.
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {name[\u{661}]}{number[\u{660}]}")),
+            XrefOutcome::Resolved(ResolvedXref {
+                kind: "number_reference",
+                refid: Some("tbl".to_string()),
+                refuri: None,
+                title: Some("Tab {name[\u{661}]}{number[\u{660}]}".to_string()),
+                reftitle: None,
+                inner: Inner::Inline {
+                    text: "Tab a1".to_string(),
+                    classes: vec!["std".to_string(), "std-numref".to_string()],
+                },
+            })
         );
         assert_eq!(
-            format_new_style("Custom {name} number {number}", Some("Cap"), "1").unwrap(),
-            "Custom Cap number 1"
+            resolver.resolve_xref(&titled("Tab {name[x]} {number}")),
+            XrefOutcome::Kept {
+                warning: Some("invalid numfig_format: Tab {name[x]} {number}".to_string())
+            }
         );
         assert_eq!(
-            format_new_style("Table {number}", None, "3").unwrap(),
-            "Table 3"
+            resolver.resolve_xref(&titled("Tab {name[3]} {number}")),
+            crash("IndexError", "string index out of range")
         );
-        let err = format_new_style("{nope}", Some("Cap"), "1").err().unwrap();
-        assert_eq!(err.0, "nope");
+        // ARABIC-INDIC DIGIT THREE is the positional field 3, and twenty
+        // ARABIC-INDIC DIGIT NINEs an index past `isize::MAX`.
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {\u{663}} {number}")),
+            crash(
+                "IndexError",
+                "Replacement index 3 out of range for positional args tuple"
+            )
+        );
+        let many_digits = format!("Tab {{name[{}]}} {{number}}", "\u{669}".repeat(20));
+        assert_eq!(
+            resolver.resolve_xref(&XrefRequest {
+                refexplicit: true,
+                contnode_text: &many_digits,
+                ..request("index", "numref", "tbl")
+            }),
+            crash("ValueError", "Too many decimal digits in format string")
+        );
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {name.real} {number}")),
+            crash("AttributeError", "'str' object has no attribute 'real'")
+        );
+        // The value of an attribute the string has is not modelled
+        // (`FormatError::NotModelled`, T19b's divergence list): the warning
+        // of the `KeyError` it stands in for, where Sphinx 9.1.0 renders the
+        // bound method's text (probed: exit 0, no record).
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {number.upper}")),
+            XrefOutcome::Kept {
+                warning: Some(
+                    "invalid numfig_format: Tab {number.upper} (KeyError('number.upper'))"
+                        .to_string()
+                )
+            }
+        );
+        assert_eq!(
+            resolver.resolve_xref(&request("index", "numref", "tbl")),
+            crash("ValueError", "Empty attribute in format string"),
+            "numfig_format"
+        );
     }
 
     #[test]
@@ -2306,7 +2552,8 @@ mod tests {
     /// Candidate labels for the walk over one request.
     fn any_roles(resolver: &Resolver<'_>, req: &XrefRequest<'_>) -> Vec<(String, String)> {
         resolver
-            .resolve_any(req, None, None, None)
+            .resolve_any(req, None, None, None, &mut Vec::new())
+            .expect("the walk does not crash")
             .into_iter()
             .map(|candidate| (candidate.role, candidate.label))
             .collect()

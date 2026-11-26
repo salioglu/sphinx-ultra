@@ -76,6 +76,13 @@ pub struct BuildConfig {
     /// HTML static paths
     pub html_static_path: Vec<PathBuf>,
 
+    /// `html_extra_path`, default `[]` (`SP/sphinx/builders/html/__init__.py`,
+    /// a list): directories, relative to the configuration directory, whose
+    /// files the HTML builder copies to the output root. Like
+    /// `html_static_path`, it is one of the HTML builder's asset paths,
+    /// which discovery leaves out (`get_asset_paths`, `:406-407`).
+    pub html_extra_path: Vec<PathBuf>,
+
     /// HTML logo file
     pub html_logo: Option<String>,
 
@@ -189,6 +196,32 @@ pub struct BuildConfig {
     /// Sphinx's bool grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
     pub keep_warnings: bool,
 
+    /// `smartquotes`, default `True` (`config.py:289`, rebuild class
+    /// `'env'`): whether `SphinxSmartQuotes` (750) educates the quotes,
+    /// dashes and ellipses of the read's text
+    /// ([`crate::transforms::smartquotes::settings_for`]). The transform
+    /// tests the value with `is False`
+    /// (`SP/sphinx/transforms/__init__.py:389`), so only a `conf.py` that
+    /// sets it to `False` turns it off; `0`, `None` and `''` leave it on.
+    /// A `-D` override takes Sphinx's bool grammar, `0` or `1` only
+    /// ([`STRICT_BOOL_KEYS`]).
+    pub smartquotes: bool,
+
+    /// `smartquotes_action`, default `'qDe'` (`config.py:290`, rebuild
+    /// class `'env'`): what the transform educates, docutils'
+    /// `educate_tokens` attribute string
+    /// ([`crate::transforms::smartquotes::educate::Actions::parse`]).
+    pub smartquotes_action: String,
+
+    /// `smartquotes_excludes` (`config.py:291-295`, rebuild class `'env'`):
+    /// the languages and builders the transform does not run for
+    /// ([`SmartquotesExcludes`]). A dict, so a `-D` override sets one key
+    /// of it to the string as given (`-D smartquotes_excludes.builders=man`),
+    /// never the whole, and when `conf.py` did not set the dict, the
+    /// override starts a new one, so the other key excludes nothing
+    /// ([`Self::apply_override`]).
+    pub smartquotes_excludes: SmartquotesExcludes,
+
     /// `trim_doctest_flags`, default `True` (`config.py:267`, rebuild class
     /// `'env'`): whether `TrimDoctestFlagsTransform`, the post-transform at
     /// priority 401, strips `# doctest: +FLAG` comments and `<BLANKLINE>`
@@ -209,6 +242,52 @@ pub struct BuildConfig {
     /// with no argument and no `.. highlight::` before it
     /// ([`crate::rst::ReadConfig::highlight_language`]).
     pub highlight_language: String,
+
+    /// `default_role`, default `None` (`config.py:247`, rebuild class
+    /// `'env'`): the role bare interpreted text has in every document
+    /// ([`crate::rst::ReadConfig::default_role`]).
+    pub default_role: Option<String>,
+
+    /// `manpages_url`, default `None` (`config.py:271`, rebuild class
+    /// `'env'`): where the `manpage` role links a page
+    /// ([`crate::rst::ReadConfig::manpages_url`]).
+    pub manpages_url: Option<String>,
+
+    /// `rst_prolog`, default `None` (`config.py:266`, rebuild class
+    /// `'env'`): text read before every document's own lines
+    /// ([`crate::rst::ReadConfig::rst_prolog`]). A `conf.py` value this
+    /// crate cannot evaluate is a configuration error, never dropped
+    /// ([`crate::python_config`]).
+    pub rst_prolog: Option<String>,
+
+    /// `rst_epilog`, default `None` (`config.py:265`, rebuild class
+    /// `'env'`): text read after every document's last line
+    /// ([`crate::rst::ReadConfig::rst_epilog`]), evaluated as `rst_prolog`
+    /// is.
+    pub rst_epilog: Option<String>,
+
+    /// `math_number_all`, default `False` (`config.py:282`, rebuild class
+    /// `'env'`): the `math` directive numbers an equation with no label
+    /// too ([`crate::rst::ReadConfig::math_number_all`]). A `-D` override
+    /// takes Sphinx's bool grammar ([`STRICT_BOOL_KEYS`]).
+    pub math_number_all: bool,
+
+    /// `math_eqref_format`, default `None` (`config.py:283`, rebuild class
+    /// `'env'`): the text of a reference to an equation, its `{number}`
+    /// formatted in; `None` is `({number})`
+    /// ([`crate::env::math::resolve_xref`]).
+    pub math_eqref_format: Option<String>,
+
+    /// `math_numfig`, default `True` (`config.py:284`, rebuild class
+    /// `'env'`): with `numfig`, an equation's number is the one the
+    /// toctree's figure numbering gave it. A `-D` override takes Sphinx's
+    /// bool grammar ([`STRICT_BOOL_KEYS`]).
+    pub math_numfig: bool,
+
+    /// `math_numsep`, default `'.'` (`config.py:285`, rebuild class
+    /// `'env'`): what separates an equation's own number from its
+    /// section's in such a number.
+    pub math_numsep: String,
 
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
     /// Off by default, exactly like Sphinx; when off,
@@ -244,16 +323,64 @@ pub struct BuildConfig {
     /// crate still reads its OWN source documents as UTF-8.
     pub source_encoding: String,
 
+    /// `source_suffix`, default `{'.rst': 'restructuredtext'}`
+    /// (`config.py:243`, rebuild class `'env'`), as `convert_source_suffix`
+    /// normalizes it ([`SourceSuffix`]): which files are documents, in the
+    /// native subcommand as in sphinx-build mode, the suffix a toctree
+    /// entry is stripped of, and the one `doc2path` appends to a name the
+    /// project has no file for. A document whose file type is not
+    /// `'restructuredtext'`, the one this crate reads, stops the build
+    /// once discovery finds it (`SphinxBuilder::build`).
+    pub source_suffix: SourceSuffix,
+
+    /// What Sphinx makes of a `conf.py` value it cannot use
+    /// ([`SourceSuffix::from_conf_value`]): a `ConfigError` or a crash,
+    /// raised where Sphinx raises it once the `-D` overrides are in, unless
+    /// one set `source_suffix` ([`Self::check_source_suffix`],
+    /// [`Self::source_suffix_config_crash`],
+    /// [`Self::source_suffix_discovery_crash`]). Diagnostic state like
+    /// [`Self::confval_type_mismatches`]: skipped by serde.
+    #[serde(skip)]
+    pub source_suffix_error: Option<SourceSuffixError>,
+
     /// Type mismatches `check_confval_types` (`config.py:775-847`) will
-    /// report — `(key, python type name)` for the two `int | None` keys
-    /// whose value arrived as some other type: a `-D` override (always
+    /// report — `(key, python type name)` for a key of
+    /// [`CONFVAL_TYPE_CHECKED_KEYS`] whose value arrived as some other type.
+    /// For the two `int | None` keys that is a `-D` override (always
     /// `str`, because `convert_overrides` has no int branch for a key whose
     /// default is `None` and returns the raw string, `config.py:397`) or a
-    /// mistyped `conf.py` assignment. Diagnostic state rather than
-    /// configuration: skipped by serde, so it neither enters the cache
-    /// fingerprint nor survives a save/load.
+    /// mistyped `conf.py` assignment; for `smartquotes`, a `conf.py`
+    /// assignment of a type that shares no base with `bool` (an `int`
+    /// does), which a `-D smartquotes=0|1` override replaces; for
+    /// `rst_prolog` and `rst_epilog`, a `conf.py` value that is neither a
+    /// `str` nor `None` (a `-D` override is a `str`). Diagnostic
+    /// state rather than configuration: skipped by serde, so it neither
+    /// enters the cache fingerprint nor survives a save/load.
     #[serde(skip)]
     pub confval_type_mismatches: Vec<(String, String)>,
+
+    /// The `conf.py` bindings of `rst_prolog` and `rst_epilog` this crate
+    /// could not evaluate, the first by line first
+    /// ([`crate::python_config::Unevaluable`]): a configuration error once
+    /// the `-D` overrides are in, for a key no override set, and for a
+    /// binding no override replaces, of an attribute or an item of that
+    /// name ([`crate::python_config::Unevaluable::overridable`],
+    /// [`Self::check_evaluated`]). Sphinx reads an override, never what
+    /// `conf.py` bound the module's name to. Diagnostic state like
+    /// [`Self::confval_type_mismatches`]: skipped by serde.
+    #[serde(skip)]
+    pub unevaluable: Vec<crate::python_config::Unevaluable>,
+
+    /// `(key, python type name)` for a `conf.py` `rst_prolog` or
+    /// `rst_epilog` that is true and no `str`, which the typed fields
+    /// cannot hold (they read `None`): Sphinx's reader raises
+    /// `AttributeError` on its `splitlines` as it reads the first document
+    /// (decision 13, [`crate::rst::ReadConfig::decoration_crash`]). A `-D`
+    /// override, a `str`, clears its key's. Skipped by serde, it enters
+    /// the cache fingerprint all the same (`builder::config_fingerprint`):
+    /// it changes what every read does.
+    #[serde(skip)]
+    pub decoration_crashes: Vec<(String, String)>,
 
     // --- Object-signature / py-domain family (research spec §1-5, §7) ---
     //
@@ -369,12 +496,449 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
     "python_maximum_signature_line_length",
 ];
 
+/// The keys whose value `check_confval_types` (`config.py:775-847`) can
+/// find mistyped here ([`BuildConfig::confval_type_mismatches`]), in
+/// Sphinx's registration order, the order it reports them in, each with the
+/// types its warning names, `sorted` by their backticked spelling:
+/// `rst_epilog` and `rst_prolog` (`config.py:265-266`), the two
+/// `int | None` keys ([`NONE_DEFAULT_INT_KEYS`]) and, between those,
+/// `smartquotes` (`config.py:289`), a core key, where the python domain
+/// registers the second when it is set up.
+const CONFVAL_TYPE_CHECKED_KEYS: [(&str, &str); 5] = [
+    ("rst_epilog", "`str'"),
+    ("rst_prolog", "`str'"),
+    ("maximum_signature_line_length", "`NoneType' or `int'"),
+    ("smartquotes", "`bool'"),
+    (
+        "python_maximum_signature_line_length",
+        "`NoneType' or `int'",
+    ),
+];
+
 /// The config keys whose only valid type is `bool` and that this crate
 /// types, whose `-D` value takes Sphinx's bool grammar: `convert_overrides`
 /// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
 /// for anything else (`config.py:366-374`). The crate's other bool keys
 /// still also take `true`/`false`.
-const STRICT_BOOL_KEYS: [&str; 2] = ["keep_warnings", "trim_doctest_flags"];
+const STRICT_BOOL_KEYS: [&str; 5] = [
+    "keep_warnings",
+    "trim_doctest_flags",
+    "smartquotes",
+    "math_number_all",
+    "math_numfig",
+];
+
+/// `smartquotes_excludes` as `SphinxSmartQuotes.is_available` reads it
+/// (`SP/sphinx/transforms/__init__.py:383-397`): the two keys of a dict,
+/// each read with `.get(key, [])` and tested with Python's `in`
+/// ([`ExcludedNames`]): `name in builders` and `config.language in
+/// languages`. Unset, the dict is Sphinx's default ([`Default`]:
+/// `{'languages': ['ja', 'zh_CN', 'zh_TW'], 'builders': ['man', 'text']}`,
+/// `config.py:291-295`); a dict that leaves a key out excludes nothing by
+/// that key, which is what an empty list reads as.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SmartquotesExcludes {
+    /// The values of `language` the transform does not run for.
+    #[serde(default)]
+    pub languages: ExcludedNames,
+    /// The names of the builders the transform does not run for
+    /// ([`crate::builder::BuilderKind::name`]).
+    #[serde(default)]
+    pub builders: ExcludedNames,
+}
+
+impl Default for SmartquotesExcludes {
+    fn default() -> Self {
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
+        Self {
+            languages: names(&["ja", "zh_CN", "zh_TW"]),
+            builders: names(&["man", "text"]),
+        }
+    }
+}
+
+impl SmartquotesExcludes {
+    /// An empty dict, `{}`, whose keys both exclude nothing: what a dotted
+    /// `-D smartquotes_excludes.<key>` override starts from when `conf.py`
+    /// set no dict ([`BuildConfig::apply_override`]).
+    pub fn empty() -> Self {
+        Self {
+            languages: ExcludedNames::default(),
+            builders: ExcludedNames::default(),
+        }
+    }
+}
+
+/// One value of [`SmartquotesExcludes`], as Python's `name in value` tests
+/// a name against it ([`Self::contains`]). Another value (`None`, a number)
+/// makes Sphinx raise `TypeError` when the transform runs, which is not
+/// modelled (decision 13): it is read as no names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ExcludedNames {
+    /// A list or a tuple, or a dict, whose keys `in` tests: a name is in it
+    /// when it is one of them, whole (`zh_CN` does not exclude `zh-CN`).
+    Names(Vec<String>),
+    /// A string, which `in` searches: a name is in it when it occurs in it
+    /// (`'html' in 'dirhtml'`, `'en' in 'en_GB'`). A `-D
+    /// smartquotes_excludes.<key>` override is one, the string as given
+    /// ([`BuildConfig::apply_override`]).
+    Text(String),
+}
+
+impl Default for ExcludedNames {
+    /// `[]`, what `.get(key, [])` gives for a key the dict leaves out.
+    fn default() -> Self {
+        ExcludedNames::Names(Vec::new())
+    }
+}
+
+impl ExcludedNames {
+    /// Python's `name in value`.
+    pub fn contains(&self, name: &str) -> bool {
+        match self {
+            ExcludedNames::Names(names) => names.iter().any(|known| known == name),
+            ExcludedNames::Text(text) => text.contains(name),
+        }
+    }
+}
+
+/// The file type Sphinx reads with its reStructuredText parser, the only
+/// one this crate reads.
+const RESTRUCTUREDTEXT: &str = "restructuredtext";
+
+/// `source_suffix` (`config.py:243`, default `{'.rst': 'restructuredtext'}`,
+/// rebuild class `'env'`, typed `Any`) as `convert_source_suffix`
+/// (`config.py:636-667`) leaves it at `config-inited`: every suffix a
+/// document's file name ends with, in the order the configuration names
+/// them, each with the file type that reads it. A string is the one
+/// suffix and a list or a tuple its suffixes, each of type
+/// `'restructuredtext'` (`dict.fromkeys`); a file type that is false
+/// (`None`, `''`) reads as `'restructuredtext'` too (`get_filetype`,
+/// `SP/sphinx/util/__init__.py:27-36`).
+///
+/// The order is data: the first suffix is what `doc2path` appends to a
+/// name the project has no file for (`Project._first_source_suffix`,
+/// `SP/sphinx/project.py:34`, `:114-128`), and of the suffixes a file name
+/// ends with, the first is the one its docname drops (`path2doc`, `:94-112`).
+/// It serializes as a list of `[suffix, file type]` pairs, which keeps it
+/// where a JSON object would not: `serde_json` keeps an object's keys
+/// sorted, and the configuration's own fingerprint and every `-D` override
+/// pass through one ([`BuildConfig::apply_override`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceSuffix(Vec<(String, String)>);
+
+impl Default for SourceSuffix {
+    /// `{'.rst': 'restructuredtext'}`.
+    fn default() -> Self {
+        SourceSuffix(vec![(".rst".to_string(), RESTRUCTUREDTEXT.to_string())])
+    }
+}
+
+impl SourceSuffix {
+    /// `-D source_suffix=<text>`: the option is typed `Any`, so
+    /// `convert_overrides` passes the text as given (`config.py:354-358`)
+    /// and `convert_source_suffix` makes it the one suffix `{text:
+    /// 'restructuredtext'}`. No comma splits it.
+    pub fn from_override(text: &str) -> Self {
+        SourceSuffix(vec![(text.to_string(), RESTRUCTUREDTEXT.to_string())])
+    }
+
+    /// `convert_source_suffix` over a configuration value in its JSON form
+    /// (a `conf.py` literal, an oracle fixture's `conf`): a string is one
+    /// suffix, a list (or tuple) one per distinct item, a dict its entries,
+    /// each with its value as the file type, a false one
+    /// `'restructuredtext'`. A JSON object keeps its keys sorted, which is
+    /// not always the order a dict was written in ([`Self::in_order`]).
+    ///
+    /// Any other value is the `ConfigError` Sphinx raises
+    /// (`config.py:662-667`). A list holding an item that is not a string
+    /// is one Sphinx crashes on (decision 13), where [`SourceSuffixError`]
+    /// says.
+    pub fn from_conf_value(value: &serde_json::Value) -> Result<Self, SourceSuffixError> {
+        use serde_json::Value;
+        let mut entries = Vec::new();
+        match value {
+            Value::String(suffix) => insert_suffix(&mut entries, suffix, RESTRUCTUREDTEXT),
+            Value::Array(items) => {
+                // `dict.fromkeys` hashes every item first, then discovery
+                // tests file names against the keys in order.
+                if let Some(item) = items
+                    .iter()
+                    .find(|item| matches!(item, Value::Array(_) | Value::Object(_)))
+                {
+                    return Err(SourceSuffixError::Unhashable(
+                        crate::python_config::python_type_name(item).to_string(),
+                    ));
+                }
+                for item in items {
+                    let Value::String(suffix) = item else {
+                        return Err(SourceSuffixError::NotAString(
+                            crate::python_config::python_type_name(item).to_string(),
+                        ));
+                    };
+                    insert_suffix(&mut entries, suffix, RESTRUCTUREDTEXT);
+                }
+            }
+            Value::Object(map) => {
+                for (suffix, filetype) in map {
+                    let filetype = match filetype {
+                        Value::String(filetype) if !filetype.is_empty() => filetype.clone(),
+                        Value::Null | Value::Bool(false) | Value::String(_) => {
+                            RESTRUCTUREDTEXT.to_string()
+                        }
+                        Value::Number(number) if number.as_f64() == Some(0.0) => {
+                            RESTRUCTUREDTEXT.to_string()
+                        }
+                        Value::Array(items) if items.is_empty() => RESTRUCTUREDTEXT.to_string(),
+                        Value::Object(map) if map.is_empty() => RESTRUCTUREDTEXT.to_string(),
+                        other => python_literal(other),
+                    };
+                    insert_suffix(&mut entries, suffix, &filetype);
+                }
+            }
+            other => {
+                return Err(SourceSuffixError::Config(format!(
+                    "The config value `source_suffix' expects a dictionary, a string, or a \
+                     list of strings. Got `{}' instead (type <class '{}'>).",
+                    python_literal(other),
+                    crate::python_config::python_type_name(other)
+                )))
+            }
+        }
+        Ok(SourceSuffix(entries))
+    }
+
+    /// [`Self::from_conf_value`] over the `conf` of an oracle fixture, whose
+    /// generators write every JSON object with its keys sorted
+    /// (`sort_keys=True`): a dict of more than one suffix has lost the order
+    /// Sphinx read it in, and with it the first suffix, so it is refused
+    /// rather than read in an order Sphinx did not see. A string, a list
+    /// and a dict of one suffix read as `conf.py`'s do.
+    pub fn from_fixture_conf(value: &serde_json::Value) -> Result<Self, String> {
+        if let serde_json::Value::Object(map) = value {
+            if map.len() > 1 {
+                return Err(format!(
+                    "a dict of {} suffixes cannot be read from an oracle fixture: its keys are \
+                     sorted, which loses the order Sphinx read them in, and with it the first \
+                     suffix",
+                    map.len()
+                ));
+            }
+        }
+        Self::from_conf_value(value).map_err(|error| error.to_string())
+    }
+
+    /// The entries in the order `order` names their suffixes: the order a
+    /// `conf.py` dict was written in, which its JSON form does not keep
+    /// ([`Self::from_conf_value`]). A suffix `order` leaves out keeps its
+    /// place after the ones it names.
+    pub fn in_order(mut self, order: &[String]) -> Self {
+        self.0.sort_by_key(|(suffix, _)| {
+            order
+                .iter()
+                .position(|named| named == suffix)
+                .unwrap_or(usize::MAX)
+        });
+        self
+    }
+
+    /// The suffixes, in order.
+    pub fn suffixes(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(suffix, _)| suffix.as_str())
+    }
+
+    /// `Project._first_source_suffix`: what `doc2path` appends to a name
+    /// the project has no file for, `''` when there is no suffix.
+    pub fn first(&self) -> &str {
+        self.suffixes().next().unwrap_or_default()
+    }
+
+    /// `Project.path2doc` (`SP/sphinx/project.py:94-112`) over `relative`,
+    /// a path relative to the source directory with `/` as its separator:
+    /// the path less the first suffix its file name ends with, or `None`
+    /// when it ends with none, or when nothing is left, which Sphinx's
+    /// callers take for no document.
+    pub fn docname(&self, relative: &str) -> Option<String> {
+        let name = relative.rsplit('/').next().unwrap_or(relative);
+        let suffix = self.suffixes().find(|suffix| name.ends_with(suffix))?;
+        let docname = &relative[..relative.len() - suffix.len()];
+        (!docname.is_empty()).then(|| docname.to_string())
+    }
+
+    /// `get_filetype` (`SP/sphinx/util/__init__.py:27-36`) over the path
+    /// of a document's file: the first suffix the path ends with, and its
+    /// file type.
+    pub fn filetype(&self, path: &str) -> Option<(&str, &str)> {
+        self.0
+            .iter()
+            .find(|(suffix, _)| path.ends_with(suffix.as_str()))
+            .map(|(suffix, filetype)| (suffix.as_str(), filetype.as_str()))
+    }
+
+    /// Whether `filetype` is `'restructuredtext'`, the one file type this
+    /// crate reads.
+    pub fn is_restructuredtext(filetype: &str) -> bool {
+        filetype == RESTRUCTUREDTEXT
+    }
+}
+
+/// A `conf.py` `source_suffix` Sphinx 9.1.0 cannot use, by where it fails
+/// ([`SourceSuffix::from_conf_value`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceSuffixError {
+    /// Neither a string, a list (or a tuple) nor a dict: the `ConfigError`
+    /// `convert_source_suffix` raises at `config-inited`
+    /// (`config.py:662-667`; [`BuildConfig::check_source_suffix`]).
+    Config(String),
+    /// A list holding an item Python cannot hash, of the Python type named
+    /// (`list`, `dict`): `dict.fromkeys` raises `TypeError` in
+    /// `convert_source_suffix`, which Sphinx reports as its `config-inited`
+    /// handler's `ExtensionError` (decision 13;
+    /// [`BuildConfig::source_suffix_config_crash`]). A tuple, which Python
+    /// hashes, reads as a list: its JSON form is an array too.
+    Unhashable(String),
+    /// A list holding an item that is no string, of the Python type named
+    /// (`int`, `float`, `bool`, `NoneType`): Sphinx keeps it as a suffix,
+    /// and its discovery raises `TypeError` once it tests a file name
+    /// against it (`Project.path2doc`, decision 13;
+    /// [`BuildConfig::source_suffix_discovery_crash`]).
+    NotAString(String),
+}
+
+impl std::fmt::Display for SourceSuffixError {
+    /// The `ConfigError`'s message, or the `TypeError`'s.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceSuffixError::Config(message) => f.write_str(message),
+            SourceSuffixError::Unhashable(type_name) => {
+                write!(f, "unhashable type: '{type_name}'")
+            }
+            SourceSuffixError::NotAString(type_name) => write!(
+                f,
+                "endswith first arg must be str or a tuple of str, not {type_name}"
+            ),
+        }
+    }
+}
+
+/// `dict[suffix] = filetype`: a new suffix goes last, a known one keeps its
+/// place and takes the new type.
+fn insert_suffix(entries: &mut Vec<(String, String)>, suffix: &str, filetype: &str) {
+    match entries.iter_mut().find(|(known, _)| known == suffix) {
+        Some((_, known)) => *known = filetype.to_string(),
+        None => entries.push((suffix.to_string(), filetype.to_string())),
+    }
+}
+
+/// `repr(value)` of a configuration value in its JSON form, as Python
+/// prints the literal it was.
+fn python_literal(value: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match value {
+        Value::Null => "None".to_string(),
+        Value::Bool(true) => "True".to_string(),
+        Value::Bool(false) => "False".to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => crate::utils::py_repr_str(text),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(python_literal)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(key, value)| format!(
+                    "{}: {}",
+                    crate::utils::py_repr_str(key),
+                    python_literal(value)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+impl Serialize for SourceSuffix {
+    /// `[[suffix, file type], ...]`, in order.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SourceSuffix {
+    /// The list of pairs [`Serialize`] writes, or, in a YAML or JSON
+    /// configuration file, the forms `conf.py` takes: a string, a list of
+    /// strings, or a map from suffix to file type (`null` for
+    /// `'restructuredtext'`), in the order the file writes it.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Item {
+            Suffix(String),
+            Typed(String, Option<String>),
+        }
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = SourceSuffix;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter
+                    .write_str("a suffix, a list of suffixes, or a map of suffixes to file types")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, suffix: &str) -> Result<SourceSuffix, E> {
+                Ok(SourceSuffix::from_override(suffix))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<SourceSuffix, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(item) = seq.next_element::<Item>()? {
+                    let (suffix, filetype) = match item {
+                        Item::Suffix(suffix) => (suffix, None),
+                        Item::Typed(suffix, filetype) => (suffix, filetype),
+                    };
+                    let filetype = filetype.filter(|filetype| !filetype.is_empty());
+                    insert_suffix(
+                        &mut entries,
+                        &suffix,
+                        filetype.as_deref().unwrap_or(RESTRUCTUREDTEXT),
+                    );
+                }
+                Ok(SourceSuffix(entries))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<SourceSuffix, A::Error> {
+                let mut entries = Vec::new();
+                while let Some((suffix, filetype)) = map.next_entry::<String, Option<String>>()? {
+                    let filetype = filetype.filter(|filetype| !filetype.is_empty());
+                    insert_suffix(
+                        &mut entries,
+                        &suffix,
+                        filetype.as_deref().unwrap_or(RESTRUCTUREDTEXT),
+                    );
+                }
+                Ok(SourceSuffix(entries))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
 
 /// `deprecate_source_encoding` (`config.py:886-896`, a `config-inited`
 /// handler at priority 790): the encodings it does NOT warn about.
@@ -489,6 +1053,7 @@ impl Default for BuildConfig {
             html_css_files: vec![],
             html_js_files: vec![],
             html_static_path: vec![PathBuf::from("_static")],
+            html_extra_path: vec![],
             html_logo: None,
             html_favicon: None,
             html_title: None,
@@ -521,15 +1086,30 @@ impl Default for BuildConfig {
             suppress_warnings: Vec::new(),
             show_warning_types: true,
             keep_warnings: false,
+            smartquotes: true,
+            smartquotes_action: "qDe".to_string(),
+            smartquotes_excludes: SmartquotesExcludes::default(),
             trim_doctest_flags: true,
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
+            default_role: None,
+            manpages_url: None,
+            rst_prolog: None,
+            rst_epilog: None,
+            math_number_all: false,
+            math_eqref_format: None,
+            math_numfig: true,
+            math_numsep: ".".to_string(),
 
             numfig: false,
             numfig_format: default_numfig_format(),
             numfig_secnum_depth: 1,
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
+            source_suffix: SourceSuffix::default(),
+            source_suffix_error: None,
             confval_type_mismatches: Vec::new(),
+            unevaluable: Vec::new(),
+            decoration_crashes: Vec::new(),
 
             // Object-signature / py-domain family, probe-verified against
             // sphinx 9.1.0 (task-2 brief, "Probe outcomes").
@@ -623,9 +1203,10 @@ impl BuildConfig {
     pub fn from_conf_py<P: AsRef<std::path::Path>>(conf_py_path: P) -> Result<Self> {
         let conf_py_path = conf_py_path.as_ref();
         let mut parser = PythonConfigParser::new()?;
-        let conf_py_config = parser.parse_conf_py(conf_py_path)?;
+        let parsed = parser.parse_conf_py(conf_py_path);
         // Silent dropping is banned: surface every construct the parser
-        // could not handle.
+        // could not handle, before the configuration error a value it must
+        // evaluate and cannot makes.
         for warning in parser.warnings() {
             log::warn!(
                 "{}:{}: {}",
@@ -634,7 +1215,7 @@ impl BuildConfig {
                 warning.message
             );
         }
-        conf_py_config.to_build_config()
+        parsed?.to_build_config()
     }
 
     /// Try to auto-detect and load configuration from various sources
@@ -699,7 +1280,21 @@ impl BuildConfig {
     /// `primary_domain` that names no registered domain warns. Sphinx then
     /// sets it to `None`; [`crate::rst::ReadConfig`] reads such a name as
     /// no domain anyway.
+    ///
+    /// The two halves, [`Self::validate_source_encoding`] (790) and
+    /// [`Self::validate_confval_types`] (800, `sphinx.config`'s), are
+    /// apart in a build: the HTML builder's 800 handlers run between them,
+    /// and `correct_copyright_year` before the second.
     pub fn validate(&self) -> Vec<String> {
+        let mut warnings = self.validate_source_encoding();
+        warnings.extend(self.validate_confval_types());
+        warnings
+    }
+
+    /// [`Self::validate`]'s first half: `deprecate_source_encoding`
+    /// (`config-inited` @790), and this crate's own note on a codec it
+    /// cannot decode.
+    pub fn validate_source_encoding(&self) -> Vec<String> {
         let mut warnings = Vec::new();
 
         // config-inited @790: `deprecate_source_encoding`. Byte-exact.
@@ -723,6 +1318,14 @@ impl BuildConfig {
                 self.source_encoding
             ));
         }
+        warnings
+    }
+
+    /// [`Self::validate`]'s second half: `check_confval_types`, then
+    /// `check_primary_domain` (`config-inited` @800, registered by
+    /// `sphinx.config` in that order, after `correct_copyright_year`).
+    pub fn validate_confval_types(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
 
         // config-inited @800: `check_confval_types`, in registration order.
         if !TOC_OBJECT_ENTRIES_SHOW_PARENTS.contains(&self.toc_object_entries_show_parents.as_str())
@@ -739,18 +1342,18 @@ impl BuildConfig {
             ));
         }
         // The type-mismatch branch (`config.py:822-838`): `type_value` is not
-        // in `{int, NoneType}` and shares no non-trivial base with NoneType,
-        // so the warning names the permitted set, `sorted` by the
-        // backticked spelling — `NoneType' before `int' (N < i).
-        for key in NONE_DEFAULT_INT_KEYS {
+        // a permitted type and shares no non-trivial base with the default's
+        // type (an `int` does with `bool`), so the warning names the
+        // permitted set, `sorted` by the backticked spelling — `NoneType'
+        // before `int' (N < i).
+        for (key, permitted) in CONFVAL_TYPE_CHECKED_KEYS {
             if let Some((_, type_name)) = self
                 .confval_type_mismatches
                 .iter()
                 .find(|(mismatched, _)| mismatched == key)
             {
                 warnings.push(format!(
-                    "The config value `{key}' has type `{type_name}'; expected `NoneType' or \
-                     `int'."
+                    "The config value `{key}' has type `{type_name}'; expected {permitted}."
                 ));
             }
         }
@@ -771,9 +1374,83 @@ impl BuildConfig {
         warnings
     }
 
-    /// Record that `key` (one of [`NONE_DEFAULT_INT_KEYS`]) received a value
-    /// of python type `type_name`, for [`Self::validate`] to report. One
-    /// entry per key, like sphinx's `once=True`.
+    /// Fails with the configuration error of the first `conf.py` binding
+    /// of `rst_prolog` or `rst_epilog` this crate could not evaluate and no
+    /// `-D` override replaced ([`Self::unevaluable`]): run once the
+    /// overrides are in. A binding no override replaces comes first,
+    /// whatever its line
+    /// ([`crate::python_config::Unevaluable::overridable`]): no override
+    /// builds while one stands, so no error that offers one is shown
+    /// before it. The error names the key and, for a binding an override
+    /// replaces, the override that builds without an edit to `conf.py`.
+    pub fn check_evaluated(&self) -> Result<()> {
+        let first = self
+            .unevaluable
+            .iter()
+            .find(|binding| !binding.overridable)
+            .or(self.unevaluable.first());
+        match first {
+            Some(binding) => Err(anyhow::anyhow!("{binding}")),
+            None => Ok(()),
+        }
+    }
+
+    /// `convert_source_suffix` (`config-inited` @800, `config.py:636-667`)
+    /// over the finished configuration, the `-D` overrides in: the
+    /// `ConfigError` it raises for a `conf.py` value that is no string,
+    /// list or dict ([`SourceSuffixError::Config`]). A file type other
+    /// than `'restructuredtext'` is no error here: Sphinx fails only as it
+    /// reads a document of that type, and the build stops once discovery
+    /// finds one (`SphinxBuilder::build`).
+    pub fn check_source_suffix(&self) -> Result<()> {
+        if let Some(SourceSuffixError::Config(message)) = &self.source_suffix_error {
+            anyhow::bail!("{message}");
+        }
+        Ok(())
+    }
+
+    /// The crash `convert_source_suffix` (`config-inited` @800) raises for
+    /// a list holding an item Python cannot hash
+    /// ([`SourceSuffixError::Unhashable`]): `dict.fromkeys`'s `TypeError`,
+    /// which Sphinx's event manager reports as the handler's
+    /// `ExtensionError` (decision 13).
+    pub fn source_suffix_config_crash(&self) -> Option<crate::rst::SphinxCrash> {
+        let Some(error @ SourceSuffixError::Unhashable(_)) = &self.source_suffix_error else {
+            return None;
+        };
+        Some(crate::rst::SphinxCrash::extension_error(
+            "Extension error (sphinx.config)",
+            "convert_source_suffix",
+            "config-inited",
+            &error.to_string(),
+        ))
+    }
+
+    /// The crash Sphinx's discovery raises for a list holding an item that
+    /// is no string ([`SourceSuffixError::NotAString`]): `path2doc` tests
+    /// each file name against the suffixes in order, and the item raises
+    /// `TypeError` for the first name no string before it ends
+    /// (`SP/sphinx/project.py:107-108`, decision 13). With a fresh
+    /// environment Sphinx discovers its documents while it sets its
+    /// application up (`_post_init_env`, `SP/sphinx/application.py:414`),
+    /// after `config-inited` and before `builder-inited`. A project whose
+    /// every file ends with an earlier suffix, `conf.py` kept elsewhere,
+    /// gets past discovery and crashes later in Sphinx, which is not
+    /// modelled: the build stops here.
+    pub fn source_suffix_discovery_crash(&self) -> Option<crate::rst::SphinxCrash> {
+        let Some(error @ SourceSuffixError::NotAString(_)) = &self.source_suffix_error else {
+            return None;
+        };
+        Some(crate::rst::SphinxCrash::python(
+            "TypeError",
+            error.to_string(),
+            crate::rst::LogLocation::None,
+        ))
+    }
+
+    /// Record that `key` (one of [`CONFVAL_TYPE_CHECKED_KEYS`]) received a
+    /// value of python type `type_name`, for [`Self::validate`] to report.
+    /// One entry per key, like sphinx's `once=True`.
     pub fn note_confval_type_mismatch(&mut self, key: &str, type_name: &str) {
         if !self
             .confval_type_mismatches
@@ -857,8 +1534,10 @@ impl BuildConfig {
     /// Apply a `-D key=value` override (sphinx-build semantics): the value is
     /// coerced to the type the field already has, dotted keys reach the nested
     /// sections (`output.*`, `theme.*`) and map-typed settings
-    /// (`html_context.name`), and an unknown key warns and is ignored rather
-    /// than failing the build.
+    /// (`numfig_format.figure`), and an unknown key warns and is ignored
+    /// rather than failing the build. A dotted `html_context.<entry>` or
+    /// `smartquotes_excludes.<entry>` sets that entry to the string as
+    /// given, as Sphinx's `Config.__init__` does.
     ///
     /// Returns the sphinx-style warning message when the override was ignored
     /// — the caller decides how to report it (it must count toward `-W`).
@@ -911,10 +1590,59 @@ impl BuildConfig {
             anyhow::bail!("'{key}' must be '0' or '1', got '{value}'");
         }
 
+        if let Some(entry) = key.strip_prefix("smartquotes_excludes.") {
+            self.override_smartquotes_excludes(entry, value);
+            return Ok(None);
+        }
+        // `master_doc` and `root_doc` are one setting (`Config.__setattr__`
+        // copies either into the other, `config.py:434-439`), which
+        // `check_confval_types` reads as `master_doc` first (`:239-240`),
+        // an override before conf.py's value (`Config.__getattr__`): the
+        // root is the first of an override of `master_doc`, conf.py's
+        // `master_doc`, an override of `root_doc` and conf.py's `root_doc`,
+        // whatever order the overrides come in. An override of `root_doc`
+        // yields to a `master_doc` conf.py or an override set, without a
+        // word, as in Sphinx.
+        if matches!(key, "master_doc" | "root_doc") {
+            if key == "master_doc" || !self.conf_values.contains_key("master_doc") {
+                self.root_doc = Some(value.to_string());
+            }
+            self.conf_values.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(None);
+        }
+        // `source_suffix` is typed `Any`: the override is the text as given,
+        // which `convert_source_suffix` makes the one suffix it names
+        // ([`SourceSuffix::from_override`]), whatever `conf.py` said.
+        if key == "source_suffix" {
+            self.source_suffix = SourceSuffix::from_override(value);
+            self.source_suffix_error = None;
+            self.conf_values.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(None);
+        }
+        // `Config.__init__` (`config.py:309-312`):
+        // `raw_config.setdefault('html_context', {})[entry] = value`, the
+        // entry being everything after the first dot and the value the
+        // string as given, which `convert_overrides` never sees: no number
+        // is read from it, and it replaces whatever `conf.py` put under that
+        // entry, a dict included, without a warning.
+        if let Some(entry) = key.strip_prefix("html_context.") {
+            self.html_context.insert(
+                entry.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(None);
+        }
+
         let mut tree = serde_json::to_value(&*self)?;
 
         // Resolve the dotted path. A key missing from its parent object is
-        // inserted as Null (map-typed settings like html_context accept new
+        // inserted as Null (map-typed settings like numfig_format accept new
         // keys); whether it truly landed is checked after the round-trip —
         // structs silently drop unknown fields, which we report as unknown.
         let mut slot = &mut tree;
@@ -989,6 +1717,32 @@ impl BuildConfig {
 
         // Serde-skipped state does not survive the round trip; carry it.
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
+        applied.unevaluable = std::mem::take(&mut self.unevaluable);
+        applied.decoration_crashes = std::mem::take(&mut self.decoration_crashes);
+        applied.source_suffix_error = self.source_suffix_error.take();
+        // `check_confval_types` reads the override, which `Config.__getattr__`
+        // takes before `conf.py`'s value, and a bool override has the one
+        // type the key allows, as a `str` key's does: nothing to report
+        // about conf.py's value.
+        if STRICT_BOOL_KEYS.contains(&key) || matches!(key, "rst_prolog" | "rst_epilog") {
+            applied
+                .confval_type_mismatches
+                .retain(|(mismatched, _)| mismatched != key);
+        }
+        // Nor does Sphinx read the prolog or epilog `conf.py` bound the
+        // module's name to, which this crate may not have evaluated, or on
+        // which Sphinx's reader would crash: an override of the key
+        // replaces it. It does not replace a binding of an attribute or an
+        // item of that name (`Unevaluable::overridable`): that binding
+        // stays.
+        if matches!(key, "rst_prolog" | "rst_epilog") {
+            applied
+                .unevaluable
+                .retain(|binding| binding.key != key || !binding.overridable);
+            applied
+                .decoration_crashes
+                .retain(|(crashing, _)| crashing != key);
+        }
         // A top-level key is a Sphinx setting name: the `.buildinfo` hash
         // sees the override as conf.py would have. (A dotted key names
         // this crate's own nesting, not a conf.py setting.)
@@ -999,6 +1753,39 @@ impl BuildConfig {
         }
         *self = applied;
         Ok(None)
+    }
+
+    /// A `-D smartquotes_excludes.<entry>=<value>` override, as Sphinx's
+    /// `Config.__init__` applies a dotted override (`config.py:309-312`):
+    /// `raw_config.setdefault('smartquotes_excludes', {})[entry] = value`.
+    /// The value is the string as given, which `convert_overrides` never
+    /// sees, so it is not split, and `in` searches it
+    /// ([`ExcludedNames::Text`]). It goes into the dict `conf.py` assigned
+    /// or an earlier such override made, which [`Self::conf_values`] holds
+    /// as Sphinx's `raw_config` does; with neither, into a new empty dict,
+    /// so the default's other key is gone and excludes nothing. An entry
+    /// the transform never reads makes the dict all the same, and Sphinx
+    /// reports no dotted override as unknown.
+    fn override_smartquotes_excludes(&mut self, entry: &str, value: &str) {
+        use serde_json::{Map, Value};
+        if !self.conf_values.contains_key("smartquotes_excludes") {
+            self.smartquotes_excludes = SmartquotesExcludes::empty();
+            self.conf_values.insert(
+                "smartquotes_excludes".to_string(),
+                Value::Object(Map::new()),
+            );
+        }
+        // A `conf.py` value that is no dict makes Sphinx raise `TypeError`
+        // here, which is not modelled (decision 13).
+        if let Some(Value::Object(raw)) = self.conf_values.get_mut("smartquotes_excludes") {
+            raw.insert(entry.to_string(), Value::String(value.to_string()));
+        }
+        let names = ExcludedNames::Text(value.to_string());
+        match entry {
+            "languages" => self.smartquotes_excludes.languages = names,
+            "builders" => self.smartquotes_excludes.builders = names,
+            _ => {}
+        }
     }
 
     /// Coerce a CLI string to the JSON type currently occupying the slot.
@@ -1175,6 +1962,41 @@ output:
         assert_eq!(config.template_dirs, vec![PathBuf::from("_mytemplates")]);
     }
 
+    /// `-D master_doc` and `-D root_doc` set the one root Sphinx reads as
+    /// `master_doc` first: an override of `master_doc` wins whatever came
+    /// before or after it, and one of `root_doc` yields to a `master_doc`
+    /// that conf.py or an override set (probe
+    /// `scratchpad/t17c-fix3/p2_root_alias.py`).
+    #[test]
+    fn master_doc_and_root_doc_overrides_set_one_root() {
+        let root_after = |conf_master: Option<&str>, overrides: &[(&str, &str)]| {
+            let mut config = BuildConfig::default();
+            if let Some(master) = conf_master {
+                config.root_doc = Some(master.to_string());
+                config
+                    .conf_values
+                    .insert("master_doc".to_string(), serde_json::json!(master));
+            }
+            for (key, value) in overrides {
+                assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+            }
+            config.root_doc
+        };
+        let root = |name: &str| Some(name.to_string());
+        assert_eq!(root_after(None, &[("master_doc", "c")]), root("c"));
+        assert_eq!(root_after(None, &[("root_doc", "d")]), root("d"));
+        assert_eq!(
+            root_after(None, &[("master_doc", "c"), ("root_doc", "d")]),
+            root("c")
+        );
+        assert_eq!(
+            root_after(None, &[("root_doc", "d"), ("master_doc", "c")]),
+            root("c")
+        );
+        assert_eq!(root_after(Some("a"), &[("root_doc", "d")]), root("a"));
+        assert_eq!(root_after(Some("a"), &[("master_doc", "c")]), root("c"));
+    }
+
     #[test]
     fn override_unknown_key_is_ignored_not_error() {
         let mut config = BuildConfig::default();
@@ -1239,6 +2061,52 @@ output:
         assert!(warning
             .unwrap()
             .contains("cannot override dictionary config setting"));
+    }
+
+    /// Sphinx's `Config.__init__` puts a dotted `-D name.key=value` into
+    /// the raw configuration as given (`config.py:309-312`): the key is
+    /// everything after the first dot, and the value is the `str` typed,
+    /// never a number, over whatever `conf.py` put under that key, with no
+    /// warning. The values are `app.config.html_context` as Sphinx 9.1.0
+    /// holds it after these overrides (probed).
+    #[test]
+    fn a_dotted_html_context_override_keeps_the_text_given() {
+        for text in ["0.00001", "1e-7", "1e16", "inf", "007"] {
+            let mut config = BuildConfig::default();
+            assert_eq!(
+                config.apply_override("html_context.x", text).unwrap(),
+                None,
+                "{text}"
+            );
+            assert_eq!(
+                serde_json::to_value(&config.html_context).unwrap(),
+                serde_json::json!({ "x": text }),
+                "{text}"
+            );
+        }
+
+        // `conf.py`'s `html_context = {'x': 1, 'y': True, 'z': [1, 2],
+        // 'w': {'v': 1}}`.
+        let mut config = BuildConfig {
+            html_context: serde_json::from_value(serde_json::json!({
+                "x": 1, "y": true, "z": [1, 2], "w": { "v": 1 }
+            }))
+            .unwrap(),
+            ..BuildConfig::default()
+        };
+        for (key, value) in [
+            ("html_context.x", "2"),
+            ("html_context.y", "yes"),
+            ("html_context.z", "a,b"),
+            ("html_context.w", "u"),
+            ("html_context.a.b", "c"),
+        ] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            serde_json::to_value(&config.html_context).unwrap(),
+            serde_json::json!({ "x": "2", "y": "yes", "z": "a,b", "w": "u", "a.b": "c" })
+        );
     }
 
     #[test]
@@ -1368,6 +2236,7 @@ output:
                 primary_domain: Some("js".to_string()),
                 highlight_language: "python3".to_string(),
                 intersphinx: true,
+                ..crate::rst::ReadConfig::default()
             }
         );
         assert_eq!(
@@ -1386,6 +2255,181 @@ output:
         };
         assert_eq!(unset.apply_override("primary_domain", "c").unwrap(), None);
         assert_eq!(unset.primary_domain.as_deref(), Some("c"));
+    }
+
+    /// `-D rst_prolog=...` and `-D rst_epilog=...` are the string as given
+    /// (`convert_overrides`: a `str` key, `config.py:395-396`), even one
+    /// that spells a number, and reach the parse through
+    /// [`crate::rst::ReadConfig`]. `check_confval_types` then reads the
+    /// override, a `str`: a mistyped `conf.py` value is not reported.
+    #[test]
+    fn prolog_and_epilog_take_overrides() {
+        let mut config = BuildConfig::default();
+        config.note_confval_type_mismatch("rst_epilog", "int");
+        config.decoration_crashes = vec![("rst_epilog".to_string(), "int".to_string())];
+        config.unevaluable = vec![crate::python_config::Unevaluable {
+            key: "rst_prolog",
+            line: 3,
+            reason: "unsupported expression".to_string(),
+            file: "conf.py".to_string(),
+            overridable: true,
+        }];
+        for (key, value) in [("rst_prolog", ".. |a| replace:: A"), ("rst_epilog", "1")] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(config.validate_confval_types(), Vec::<String>::new());
+        // Sphinx reads the override, never what conf.py bound the key to:
+        // neither the binding this crate could not evaluate nor the value
+        // its reader crashes on.
+        assert!(config.check_evaluated().is_ok());
+        assert_eq!(config.decoration_crashes, Vec::new());
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig {
+                rst_prolog: Some(".. |a| replace:: A".to_string()),
+                rst_epilog: Some("1".to_string()),
+                ..crate::rst::ReadConfig::from(&BuildConfig::default())
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("rst_epilog"),
+            Some(&serde_json::Value::String("1".to_string()))
+        );
+    }
+
+    /// An override of one key leaves the other's unevaluable binding and
+    /// crash in place, and an unrelated override keeps both
+    /// ([`BuildConfig::check_evaluated`],
+    /// [`crate::rst::ReadConfig::decoration_crash`], the prolog's first).
+    #[test]
+    fn an_override_replaces_only_its_own_key() {
+        let binding = |key| crate::python_config::Unevaluable {
+            key,
+            line: 2,
+            reason: "an import".to_string(),
+            file: "conf.py".to_string(),
+            overridable: true,
+        };
+        let mut config = BuildConfig {
+            unevaluable: vec![binding("rst_epilog")],
+            decoration_crashes: vec![
+                ("rst_prolog".to_string(), "list".to_string()),
+                ("rst_epilog".to_string(), "dict".to_string()),
+            ],
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config)
+                .decoration_crash
+                .as_deref(),
+            Some("list")
+        );
+        for (key, value) in [("project", "P"), ("rst_prolog", "x")] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            config.check_evaluated().unwrap_err().to_string(),
+            "cannot evaluate rst_epilog (conf.py, line 2: an import): sphinx-ultra reads \
+             conf.py without running it, so rst_prolog and rst_epilog must be string literals; \
+             set it with -D rst_epilog=... to build without editing conf.py"
+        );
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config)
+                .decoration_crash
+                .as_deref(),
+            Some("dict")
+        );
+    }
+
+    /// An override of a key keeps the key's bindings no override
+    /// replaces, of an attribute or an item of that name
+    /// ([`crate::python_config::Unevaluable::overridable`]), and the
+    /// configuration error reports such a binding before any other,
+    /// whatever its line: no override builds while one stands, so its
+    /// message offers none, and no message that offers one is shown
+    /// while one stands.
+    #[test]
+    fn an_override_keeps_a_binding_sphinx_reads_over_it() {
+        let binding = |key, line, overridable| crate::python_config::Unevaluable {
+            key,
+            line,
+            reason: if overridable {
+                "unsupported expression".to_string()
+            } else {
+                "an assignment to an attribute of that name".to_string()
+            },
+            file: "conf.py".to_string(),
+            overridable,
+        };
+        let mut config = BuildConfig {
+            unevaluable: vec![
+                binding("rst_prolog", 1, true),
+                binding("rst_epilog", 2, true),
+                binding("rst_prolog", 5, false),
+            ],
+            ..BuildConfig::default()
+        };
+        let attribute = "cannot evaluate rst_prolog (conf.py, line 5: an assignment to an \
+                         attribute of that name): sphinx-ultra reads conf.py without running \
+                         it, so rst_prolog and rst_epilog must be string literals; conf.py \
+                         changes an attribute or item of that name, which a -D rst_prolog=... \
+                         override does not replace, so edit conf.py";
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
+        assert_eq!(config.apply_override("rst_prolog", "x").unwrap(), None);
+        let left: Vec<(&str, usize)> = config
+            .unevaluable
+            .iter()
+            .map(|binding| (binding.key, binding.line))
+            .collect();
+        assert_eq!(left, [("rst_epilog", 2), ("rst_prolog", 5)]);
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
+        assert_eq!(config.apply_override("rst_epilog", "y").unwrap(), None);
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
+    }
+
+    /// The read-side keys of wave 5a T17a take a `-D` override as Sphinx's
+    /// `convert_overrides` gives it: the string for a `str`- or
+    /// `None`-defaulted key, the bool grammar `0`/`1` for the math domain's
+    /// two bools (any other value a `ConfigError`). They reach the parse
+    /// through [`crate::rst::ReadConfig`] and the resolution through
+    /// [`crate::env::math::MathConfig`].
+    #[test]
+    fn role_and_math_keys_take_overrides() {
+        let mut config = BuildConfig::default();
+        for (key, value) in [
+            ("default_role", "obj"),
+            ("manpages_url", "https://man/{path}"),
+            ("math_number_all", "1"),
+            ("math_eqref_format", "({number})"),
+            ("math_numfig", "0"),
+            ("math_numsep", "-"),
+        ] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig {
+                default_role: Some("obj".to_string()),
+                manpages_url: Some("https://man/{path}".to_string()),
+                math_number_all: true,
+                ..crate::rst::ReadConfig::from(&BuildConfig::default())
+            }
+        );
+        assert_eq!(
+            crate::env::math::MathConfig::from(&config),
+            crate::env::math::MathConfig {
+                numfig: false,
+                numsep: "-".to_string(),
+                eqref_format: Some("({number})".to_string()),
+            }
+        );
+        for key in ["math_number_all", "math_numfig"] {
+            let error = BuildConfig::default()
+                .apply_override(key, "true")
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, format!("'{key}' must be '0' or '1', got 'true'"));
+        }
     }
 
     /// `check_primary_domain` (`config-inited`, 800, `config.py:854-858`):
@@ -1529,6 +2573,120 @@ output:
             );
             assert!(!config.keep_warnings, "{value}: the setting is unchanged");
         }
+    }
+
+    /// The smart-quotes keys (`config.py:289-295`) default like Sphinx's,
+    /// and take `-D` as Sphinx does: `smartquotes` only as `0` or `1`, any
+    /// other value (`False` included) a fatal `ConfigError` with Sphinx's
+    /// message; `smartquotes_action` as a string; `smartquotes_excludes`
+    /// one key at a time, never as a whole dict, each value the string as
+    /// given, never split on commas. With no `conf.py` dict, the first
+    /// dotted override starts an empty one, so the default's other key is
+    /// gone; a later override adds to that dict, which `conf_values` holds,
+    /// as Sphinx's `raw_config` does.
+    //
+    // oracle (Sphinx 9.1.0, `-b html` builds, wave 5a T16b fix round 1,
+    //   scratch `t16bf/probe_excludes.out`): with `language = 'ja'` and no
+    //   conf.py dict, `-D smartquotes_excludes.builders=man` educates
+    //   (`「Hi」 – it’s`), `-D smartquotes_excludes.foo=x` too, with no
+    //   warning, and `.languages=ja` with `.builders=man`, in either order,
+    //   does not; `-D smartquotes_excludes=x` warns and is ignored.
+    #[test]
+    fn smartquotes_keys_take_sphinxs_override_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(config.smartquotes);
+        assert_eq!(config.smartquotes_action, "qDe");
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
+        let text = |value: &str| ExcludedNames::Text(value.to_string());
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: names(&["ja", "zh_CN", "zh_TW"]),
+                builders: names(&["man", "text"]),
+            }
+        );
+
+        assert!(config.apply_override("smartquotes", "0").unwrap().is_none());
+        assert!(!config.smartquotes);
+        assert_eq!(
+            config.conf_values.get("smartquotes"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert!(config.apply_override("smartquotes", "1").unwrap().is_none());
+        assert!(config.smartquotes);
+        for value in ["False", "false", "true", "no", ""] {
+            let error = config
+                .apply_override("smartquotes", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'smartquotes' must be '0' or '1', got '{value}'")
+            );
+            assert!(config.smartquotes, "{value}: the setting is unchanged");
+        }
+
+        assert!(config
+            .apply_override("smartquotes_action", "qBe")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.smartquotes_action, "qBe");
+
+        // No conf.py dict: the override starts `{}`.
+        assert!(config
+            .apply_override("smartquotes_excludes.builders", "html,dummy")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: ExcludedNames::default(),
+                builders: text("html,dummy"),
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"builders": "html,dummy"}))
+        );
+        // The dict it made takes the next one.
+        assert!(config
+            .apply_override("smartquotes_excludes.languages", "en_GB")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: text("en_GB"),
+                builders: text("html,dummy"),
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"builders": "html,dummy", "languages": "en_GB"}))
+        );
+        let ignored = config
+            .apply_override("smartquotes_excludes", "html")
+            .unwrap();
+        assert!(
+            ignored.is_some_and(|message| message
+                .starts_with("cannot override dictionary config setting 'smartquotes_excludes'")),
+            "a whole dict is not overridden"
+        );
+        assert_eq!(config.smartquotes_excludes.builders, text("html,dummy"));
+
+        // A key the transform never reads makes the dict all the same, and
+        // is no unknown key.
+        let mut config = BuildConfig::default();
+        assert!(config
+            .apply_override("smartquotes_excludes.foo", "x")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.smartquotes_excludes, SmartquotesExcludes::empty());
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"foo": "x"}))
+        );
     }
 
     /// `trim_doctest_flags` (`config.py:267`: default `True`, type `bool`
@@ -1855,5 +3013,284 @@ output:
             .is_none());
         assert_eq!(config.numfig_format["figure"], "Figure %s");
         assert_eq!(config.numfig_format["table"], "Table %s");
+    }
+
+    fn entries(source_suffix: &SourceSuffix) -> Vec<(&str, &str)> {
+        source_suffix
+            .0
+            .iter()
+            .map(|(suffix, filetype)| (suffix.as_str(), filetype.as_str()))
+            .collect()
+    }
+
+    /// `convert_source_suffix` (`config.py:636-667`) over each shape a
+    /// value takes: a string is one suffix, a list or a tuple one per
+    /// distinct item, a dict its entries, a false file type reading as
+    /// `'restructuredtext'` (`get_filetype`); anything else is its
+    /// `ConfigError`. A list item Python cannot hash is `dict.fromkeys`'s
+    /// `TypeError`, and one that is no string the `TypeError` discovery
+    /// raises, whichever comes first in the list. Probed on Sphinx 9.1.0
+    /// (`scratchpad/t17c/p1_suffix.py`: `str_txt`, `list_txt`, `tuple`,
+    /// `dict_none`, `dict_empty_filetype`, `dict_false_filetype`,
+    /// `dict_md`, `dict_int_filetype`, `int_value`, `empty_list`,
+    /// `list_nonstr`; `scratchpad/t17c-fix1/p5_nonstr.py`: `int_item`,
+    /// `int_item_first`, `none_item`, `float_item`, `bool_item`,
+    /// `list_item`, `dict_item`).
+    #[test]
+    fn source_suffix_normalizes_like_convert_source_suffix() {
+        use serde_json::json;
+        let rst = RESTRUCTUREDTEXT;
+        let read = |value| SourceSuffix::from_conf_value(&value).unwrap();
+        assert_eq!(entries(&read(json!(".txt"))), [(".txt", rst)]);
+        assert_eq!(
+            entries(&read(json!([".rst", ".txt", ".rst"]))),
+            [(".rst", rst), (".txt", rst)]
+        );
+        assert_eq!(
+            entries(&read(
+                json!({".rst": null, ".txt": "", ".rest": false, ".x": 0, ".md": "markdown", ".y": 1})
+            )),
+            [
+                (".md", "markdown"),
+                (".rest", rst),
+                (".rst", rst),
+                (".txt", rst),
+                (".x", rst),
+                (".y", "1"),
+            ]
+        );
+        assert_eq!(entries(&read(json!([]))), []);
+        assert_eq!(read(json!([])).first(), "");
+
+        let error = |value| SourceSuffix::from_conf_value(&value).unwrap_err();
+        for (value, shown, type_name) in [
+            (json!(5), "5", "int"),
+            (json!(1.5), "1.5", "float"),
+            (json!(true), "True", "bool"),
+            (json!(null), "None", "NoneType"),
+        ] {
+            assert_eq!(
+                error(value),
+                SourceSuffixError::Config(format!(
+                    "The config value `source_suffix' expects a dictionary, a string, or a \
+                     list of strings. Got `{shown}' instead (type <class '{type_name}'>)."
+                ))
+            );
+        }
+        for (value, type_name) in [
+            (json!([".rst", 1]), "int"),
+            (json!([1, ".rst"]), "int"),
+            (json!([".rst", null]), "NoneType"),
+            (json!([".rst", 1.5]), "float"),
+            (json!([".rst", true, 1]), "bool"),
+        ] {
+            let error = error(value);
+            assert_eq!(error, SourceSuffixError::NotAString(type_name.to_string()));
+            assert_eq!(
+                error.to_string(),
+                format!("endswith first arg must be str or a tuple of str, not {type_name}")
+            );
+        }
+        for (value, type_name) in [
+            (json!([".rst", [".txt"]]), "list"),
+            (json!([".rst", 1, {"a": 1}]), "dict"),
+        ] {
+            let error = error(value);
+            assert_eq!(error, SourceSuffixError::Unhashable(type_name.to_string()));
+            assert_eq!(error.to_string(), format!("unhashable type: '{type_name}'"));
+        }
+    }
+
+    /// Where each `source_suffix` Sphinx cannot use stops the build: the
+    /// `ConfigError` and an unhashable item's crash at `config-inited`, an
+    /// item that is no string as discovery tests file names against it
+    /// (decision 13), each named as Sphinx 9.1.0's report names it (probe
+    /// `scratchpad/t17c-fix1/p5_nonstr.py`).
+    #[test]
+    fn a_source_suffix_sphinx_cannot_use_stops_where_sphinx_does() {
+        let config = |error: SourceSuffixError| BuildConfig {
+            source_suffix_error: Some(error),
+            ..BuildConfig::default()
+        };
+        let reports = |config: &BuildConfig| {
+            (
+                config.check_source_suffix().err().map(|e| e.to_string()),
+                config.source_suffix_config_crash().map(|c| c.to_string()),
+                config.source_suffix_discovery_crash().map(|c| c.report()),
+            )
+        };
+        assert_eq!(
+            reports(&config(SourceSuffixError::Config("bad".to_string()))),
+            (Some("bad".to_string()), None, None)
+        );
+        assert_eq!(
+            reports(&config(SourceSuffixError::Unhashable("list".to_string()))),
+            (
+                None,
+                Some(
+                    "sphinx.errors.ExtensionError: Handler <function convert_source_suffix at \
+                     0x...> for event 'config-inited' threw an exception (exception: \
+                     unhashable type: 'list')"
+                        .to_string()
+                ),
+                None
+            )
+        );
+        assert_eq!(
+            reports(&config(SourceSuffixError::NotAString("int".to_string()))),
+            (
+                None,
+                None,
+                Some(
+                    "\n\n    TypeError: endswith first arg must be str or a tuple of str, not int\n\n\
+                     Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it \
+                     does.\n"
+                        .to_string()
+                )
+            )
+        );
+        // `-D source_suffix` replaces the value, and with it what it fails.
+        let mut overridden = config(SourceSuffixError::NotAString("int".to_string()));
+        overridden.apply_override("source_suffix", ".rst").unwrap();
+        assert_eq!(reports(&overridden), (None, None, None));
+    }
+
+    /// The order of the suffixes is data: the first is what `doc2path`
+    /// appends, and a file's docname drops the first its name ends with
+    /// (`Project.path2doc`, `SP/sphinx/project.py:94-112`), the name only:
+    /// a suffix with no dot leaves the dot (`index.`), an empty one drops
+    /// nothing, and a name that is all suffix is no document. Probed on
+    /// Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`, `nodot`).
+    #[test]
+    fn source_suffix_order_decides_the_first_suffix_and_the_docname() {
+        use serde_json::json;
+        let read = |value| SourceSuffix::from_conf_value(&value).unwrap();
+        let ordered =
+            read(json!({".rst": null, ".txt": null})).in_order(&[".txt".into(), ".rst".into()]);
+        assert_eq!(ordered.suffixes().collect::<Vec<_>>(), [".txt", ".rst"]);
+        assert_eq!(ordered.first(), ".txt");
+
+        assert_eq!(
+            read(json!([".txt", ".rst.txt"])).docname("sub/page.rst.txt"),
+            Some("sub/page.rst".to_string())
+        );
+        assert_eq!(
+            read(json!([".rst.txt", ".txt"])).docname("sub/page.rst.txt"),
+            Some("sub/page".to_string())
+        );
+        assert_eq!(
+            read(json!(["rst"])).docname("index.rst"),
+            Some("index.".to_string())
+        );
+        assert_eq!(
+            SourceSuffix::from_override("").docname("a/b.c"),
+            Some("a/b.c".to_string())
+        );
+        assert_eq!(SourceSuffix::default().docname("README.md"), None);
+        assert_eq!(
+            SourceSuffix::default().docname("sub/.rst"),
+            Some("sub/".to_string())
+        );
+        assert_eq!(SourceSuffix::default().docname(".rst"), None);
+    }
+
+    /// `-D source_suffix=<text>` is the one suffix `<text>`, commas and
+    /// all, as Sphinx's `convert_overrides` passes an `Any` option's text
+    /// (`config.py:354-358`), whatever `conf.py` said: a value Sphinx could
+    /// not read no longer stands, nor does a file type this crate cannot
+    /// read, which is no error before discovery finds a document of it.
+    /// Probed on Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`, `D_rst_txt`,
+    /// `dict_md`, `dict_md_D`, `dict_md_no_md_files`).
+    #[test]
+    fn a_source_suffix_override_is_one_suffix_and_replaces_conf_py() {
+        let mut config = BuildConfig {
+            source_suffix_error: Some(SourceSuffixError::Config("unreadable".to_string())),
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            config.check_source_suffix().unwrap_err().to_string(),
+            "unreadable"
+        );
+        assert!(config
+            .apply_override("source_suffix", ".rst,.txt")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            entries(&config.source_suffix),
+            [(".rst,.txt", RESTRUCTUREDTEXT)]
+        );
+        assert!(config.check_source_suffix().is_ok());
+        assert_eq!(
+            config.conf_values["source_suffix"],
+            serde_json::json!(".rst,.txt")
+        );
+
+        let mut config = BuildConfig {
+            source_suffix: SourceSuffix::from_conf_value(
+                &serde_json::json!({".rst": "restructuredtext", ".md": "markdown"}),
+            )
+            .unwrap()
+            .in_order(&[".rst".into(), ".md".into()]),
+            ..BuildConfig::default()
+        };
+        assert!(config.check_source_suffix().is_ok());
+        assert_eq!(
+            config.source_suffix.filetype("/src/readme.md"),
+            Some((".md", "markdown"))
+        );
+        assert_eq!(
+            config.source_suffix.filetype("/src/index.rst"),
+            Some((".rst", RESTRUCTUREDTEXT))
+        );
+        assert_eq!(config.source_suffix.filetype("/src/conf.py"), None);
+        config.apply_override("source_suffix", ".rst").unwrap();
+        assert_eq!(config.source_suffix.filetype("/src/readme.md"), None);
+    }
+
+    /// The suffixes keep their order wherever the configuration goes: an
+    /// override of another key carries the whole configuration through
+    /// JSON, whose objects keep their keys sorted, as the cache fingerprint
+    /// does; a YAML configuration names them in the forms `conf.py` takes,
+    /// in its own order. An unreadable `conf.py` value's error survives an
+    /// override of another key.
+    #[test]
+    fn source_suffix_keeps_its_order_through_overrides_and_config_files() {
+        let mut config = BuildConfig {
+            source_suffix: SourceSuffix::from_conf_value(&serde_json::json!([".txt", ".rst"]))
+                .unwrap(),
+            source_suffix_error: Some(SourceSuffixError::NotAString("int".to_string())),
+            ..BuildConfig::default()
+        };
+        assert!(config.apply_override("project", "P").unwrap().is_none());
+        assert_eq!(
+            config.source_suffix.suffixes().collect::<Vec<_>>(),
+            [".txt", ".rst"]
+        );
+        assert_eq!(
+            config.source_suffix_error,
+            Some(SourceSuffixError::NotAString("int".to_string()))
+        );
+        assert_eq!(
+            serde_json::to_value(&config.source_suffix).unwrap(),
+            serde_json::json!([[".txt", "restructuredtext"], [".rst", "restructuredtext"]])
+        );
+
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("sphinx-ultra.yaml");
+        for (yaml, expected) in [
+            ("source_suffix: .txt\n", vec![(".txt", RESTRUCTUREDTEXT)]),
+            (
+                "source_suffix: ['.txt', '.rst']\n",
+                vec![(".txt", RESTRUCTUREDTEXT), (".rst", RESTRUCTUREDTEXT)],
+            ),
+            (
+                "source_suffix: {'.txt': null, '.md': markdown}\n",
+                vec![(".txt", RESTRUCTUREDTEXT), (".md", "markdown")],
+            ),
+        ] {
+            fs::write(&p, yaml).unwrap();
+            let config = BuildConfig::from_file(&p).unwrap();
+            assert_eq!(entries(&config.source_suffix), expected, "{yaml}");
+        }
     }
 }

@@ -9,11 +9,12 @@
 //! the same config [`crate::doctree::to_bincode`]/`from_bincode` use) to
 //! `<cache_dir>/env.bin`. That file lives inside the cache directory
 //! governed by the `.config-fingerprint` wipe protocol in `src/cache.rs`: a
-//! change to a content-bearing configuration value nukes the whole cache
-//! dir, `env.bin` included — which is the desired behavior, since the
-//! environment was built under the old configuration. Note that this is
-//! *broader* than Sphinx, which only invalidates its environment for config
-//! values with rebuild class `'env'` and never deletes its doctrees; the
+//! change to a content-bearing configuration value empties the cache dir,
+//! `env.bin` included, of everything but intersphinx's inventory cache —
+//! which is the desired behavior, since the environment was built under
+//! the old configuration. Note that this is *broader* than Sphinx, which
+//! only invalidates its environment for config values with rebuild class
+//! `'env'` and never deletes its doctrees; the
 //! filter in `builder::EXCLUDED_FROM_FINGERPRINT` keeps at least the purely
 //! operational flags (`-W`, `-n`) from triggering it.
 //!
@@ -83,7 +84,10 @@ use crate::doctree::Node;
 ///
 /// Version 6: wave 5a's citation and math domains — the environment gains
 /// `citation` and `math` (`env.domaindata['citation']` and `['math']`).
-pub const ENV_VERSION: u32 = 6;
+///
+/// Version 7: wave 5a's download collector — the environment gains
+/// `dlfiles` (`env.dlfiles`, [`collectors::downloads::DownloadFiles`]).
+pub const ENV_VERSION: u32 = 7;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
@@ -208,6 +212,10 @@ pub struct BuildEnvironment {
     /// documents that use it and the unique basename the builder copies it
     /// under ([`collectors::images`]).
     pub images: collectors::images::FilenameUniqDict,
+    /// `env.dlfiles`: the files the documents offer for download, each
+    /// with the documents that offer it and where under `_downloads/` the
+    /// builder copies it ([`collectors::downloads`]).
+    pub dlfiles: collectors::downloads::DownloadFiles,
     /// The citation domain's registries (`domaindata['citation']`): the
     /// citations, in the order they were noted, and the documents that
     /// refer to each target ([`citation::CitationDomainData`]).
@@ -354,7 +362,8 @@ impl BuildEnvironment {
     /// toctree.py:30` (toctree fields + `files_to_rebuild`),
     /// `environment/collectors/title.py:23` (titles/longtitles),
     /// `environment/collectors/dependencies.py:24` (dependencies),
-    /// `environment/collectors/asset.py:36-37` (images),
+    /// `environment/collectors/asset.py:36-37` (images), `:139-140`
+    /// (dlfiles),
     /// `environment/collectors/metadata.py:22` (metadata),
     /// `domains/std/__init__.py:896` (std domain), `domains/index.py:41`
     /// (index entries), `domains/citation.py:49-57` (citation domain),
@@ -365,6 +374,7 @@ impl BuildEnvironment {
         self.reread_always.remove(docname);
         self.dependencies.remove(docname);
         self.images.purge_doc(docname);
+        self.dlfiles.purge_doc(docname);
         self.metadata.remove(docname);
 
         self.titles.remove(docname);

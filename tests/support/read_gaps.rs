@@ -23,16 +23,17 @@
 //! (Substitutions, 220; the citation transforms, 619; Footnotes, 620; the
 //! unreferenced-footnote warning, 622), T12's `autonumber ids`, `class
 //! attribute` and `docinfo` (AutoNumbering, 210; ClassAttribute, 210;
-//! DocInfo, 340, and the metadata collector's pop, 880), and T13a's
+//! DocInfo, 340, and the metadata collector's pop, 880), T13a's
 //! `candidates` (the image collector, 880, and its `image file not
-//! readable`): a divergence of that shape now is a regression, which the
-//! census reports unexplained. T10's `dangling refs` and `indirect
-//! targets` stay, for what later tasks shift: a `problematic` whose ids,
-//! and the target transforms' id allocations and records, move when a
-//! pending transform takes ids first, in rows those tasks own. The
-//! read-state census keeps `footnotes`, `substitutions` and `autonumber
-//! ids` for the same reason, as the families of the ids 620, 220 and 210
-//! allocate in such rows.
+//! readable`) and the tree shapes of T18b's `pending` (TargetNotes, 540;
+//! SectNum, 710; Contents, 720): a divergence of that shape now is a
+//! regression, which the census reports unexplained. T10's `dangling refs`
+//! and `indirect targets` stay, for what later tasks shift: a
+//! `problematic` whose ids, and the target transforms' id allocations and
+//! records, move when an earlier step takes ids first, in rows those tasks
+//! own. The read-state census keeps `footnotes`, `substitutions`,
+//! `autonumber ids` and `pending` for the same reason, as the families of
+//! the ids 620, 220, 210, 540 and 720 allocate in such rows.
 
 use std::collections::BTreeSet;
 
@@ -79,11 +80,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-/// The structure directives' parse halves (`contents`, `sectnum`,
-/// `target-notes`).
-pub const PENDING_DIRECTIVES: GapFix = gap_fix("pending", "5a-T18a");
-/// Their transforms (SectNum 710, Contents 720, TargetNotes 540).
-pub const PENDING_TRANSFORMS: GapFix = gap_fix("pending", "5a-T18b");
 
 /// What a census learned about one divergence.
 #[derive(Debug, Default)]
@@ -261,9 +257,6 @@ fn message_lines(lines: &[&str]) -> Vec<Option<String>> {
     messages
 }
 
-/// The structure directives whose parse halves T18a ports.
-const PENDING_DIRECTIVE_NAMES: [&str; 3] = ["contents", "sectnum", "target-notes"];
-
 /// The families a doctree divergence shows: one diff hunk at a time, the
 /// rules below over the lines only Sphinx's tree has (`removed`) and those
 /// only ours has (`added`). Anything they do not explain is reported.
@@ -271,33 +264,18 @@ pub fn tree_census(expected: &str, actual: &str) -> Census {
     let expected_lines: Vec<&str> = expected.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
     let messages = message_lines(&actual_lines);
-    let notes = target_notes(&expected_lines);
     let mut census = Census::default();
     for hunk in line_hunks(&expected_lines, &actual_lines) {
-        census.merge(hunk_census(&hunk, &messages, &notes));
+        census.merge(hunk_census(&hunk, &messages));
     }
     census
-}
-
-/// The ids of the footnotes TargetNotes (540) makes in the expected tree,
-/// those it names `TARGET_NOTE: <id>`: a footnote reference to one is
-/// TargetNotes' too.
-fn target_notes(expected: &[&str]) -> BTreeSet<String> {
-    expected
-        .iter()
-        .map(|line| line.trim_start())
-        .filter(|line| line.starts_with("<footnote ") && line.contains("TARGET_NOTE"))
-        .filter_map(|line| line.split(" ids=\"").nth(1)?.split('"').next())
-        .map(str::to_string)
-        .collect()
 }
 
 /// One hunk's families. `messages` is [`message_lines`] of the actual
 /// text: a `system_message` only our tree has is judged by its text,
 /// whichever of its lines the hunk holds, since the line diff can match a
-/// line inside it (a `<paragraph>`) and split it across hunks. `notes` are
-/// the ids of TargetNotes' footnotes ([`target_notes`]).
-fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<String>) -> Census {
+/// line inside it (a `<paragraph>`) and split it across hunks.
+fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>]) -> Census {
     let mut census = Census::default();
     let removed: Vec<&str> = hunk.removed.iter().map(|line| line.trim_start()).collect();
     let added: Vec<&str> = hunk.added.iter().map(|line| line.trim_start()).collect();
@@ -324,21 +302,6 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
                 census.add(INDIRECT_TARGETS);
             }
         }
-        let target_note_reference = line.starts_with("<footnote_reference ")
-            && line
-                .split(" refid=\"")
-                .nth(1)
-                .and_then(|rest| rest.split('"').next())
-                .is_some_and(|refid| notes.contains(refid));
-        if line.contains("classes=\"sectnum\"")
-            || line.contains("classes=\"contents\"")
-            || line.contains("auto-toc")
-            || line.contains("TARGET_NOTE")
-            || line.starts_with("<title auto=\"1\"")
-            || target_note_reference
-        {
-            census.add(PENDING_TRANSFORMS);
-        }
         if line.starts_with("<system_message ") {
             let message = text_under(&hunk.removed, at + 1);
             census
@@ -355,16 +318,9 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
         }
     }
     for message in our_messages {
-        let pending = PENDING_DIRECTIVE_NAMES
-            .iter()
-            .any(|name| message.contains(&format!("\"{name}\"")));
-        if pending {
-            census.add(PENDING_DIRECTIVES);
-        } else {
-            census
-                .unexplained
-                .push(format!("a message only our tree has: {message:?}"));
-        }
+        census
+            .unexplained
+            .push(format!("a message only our tree has: {message:?}"));
     }
 
     if census.fixes.is_empty() && census.unexplained.is_empty() {

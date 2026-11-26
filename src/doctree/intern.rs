@@ -1,29 +1,39 @@
 //! `&'static str` interner for the doctree wire format.
 //!
-//! `Node::kind` and `Attrs::extra` keys are `&'static str` in memory (see
-//! `mod.rs`), but deserializing produces owned bytes with no `'static`
-//! lifetime. For a doctree bincode produced by this crate's own
-//! [`super::to_bincode`], the strings that flow through here are always
-//! `kinds.rs` consts or the closed set of attribute-key literals — a small,
-//! fixed vocabulary — so leaking each distinct string once is a fixed, tiny
-//! cost.
+//! `Node::kind` is a `&'static str` in memory (see `mod.rs`), but
+//! deserializing produces owned bytes with no `'static` lifetime. For a
+//! doctree bincode produced by this crate's own [`super::to_bincode`], the
+//! kinds that flow through here are always this crate's own literals — a
+//! small vocabulary, closed at compile time — so leaking each distinct
+//! string once is a fixed, tiny cost.
 //!
-//! Nothing here checks that, though: `intern` leaks and caches whatever
-//! `&str` it's handed, unconditionally. That's harmless for this crate's
-//! own well-formed output, but `from_bincode` (and, transitively, `intern`)
-//! also has to accept bytes it did *not* produce — a corrupted file, or one
-//! written by a future/older version of this crate with a different
-//! vocabulary, landing in the wipe-on-fingerprint-mismatch doctree cache.
-//! `MAX_INTERNED` bounds the damage from that case: once the table would
-//! grow past it, `intern` refuses instead of leaking further, and
-//! deserialization fails with an error instead of the process quietly
-//! accumulating unbounded leaked memory. `intern` is `pub(crate)`, not
-//! `pub` — nothing outside this crate needs it; widen deliberately if that
-//! changes.
+//! `Attrs::extra` keys are not interned, because their source is open: a
+//! `meta` node's attribute names are whatever the document's author wrote
+//! (`MetaBody.parsemeta`'s `node[attname.lower()] = val`), as many distinct
+//! ones as the author likes, and Sphinx keeps every one of them. So a key
+//! is a `Cow<'static, str>`: borrowed when it is one of this crate's
+//! literals, owned when the parse takes it from the document, and owned
+//! whenever a decode reads it ([`deserialize_extra`]). No number of
+//! distinct keys can then use up the table the kinds need, drop an
+//! attribute, or make a doctree or `env.bin` decode fail.
+//!
+//! Nothing here checks that the kinds are this crate's, though: `intern`
+//! leaks and caches whatever `&str` it's handed, unconditionally. That's
+//! harmless for this crate's own well-formed output, but `from_bincode`
+//! (and, transitively, `intern`) also has to accept bytes it did *not*
+//! produce — a corrupted file, or one written by a future/older version of
+//! this crate with a different vocabulary, landing in the
+//! wipe-on-fingerprint-mismatch doctree cache. `MAX_INTERNED` bounds the
+//! damage from that case: once the table would grow past it, `intern`
+//! refuses instead of leaking further, and deserialization fails with an
+//! error instead of the process quietly accumulating unbounded leaked
+//! memory. `intern` is `pub(crate)`, not `pub` — nothing outside this
+//! crate needs it; widen deliberately if that changes.
 
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserializer, Serializer};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Mutex;
@@ -31,11 +41,10 @@ use std::sync::Mutex;
 use super::AttrValue;
 
 /// Generous upper bound on distinct interned strings. The real vocabulary
-/// (node kinds + attribute keys) is well under a few hundred entries and
-/// fixed at compile time, so legitimate input never comes close; this
-/// exists only to cap growth from input that didn't come from this crate's
-/// own encoder.
-const MAX_INTERNED: usize = 4096;
+/// (node kinds) is a few hundred entries at most and fixed at compile
+/// time, so legitimate input never comes close; this exists only to cap
+/// growth from input that didn't come from this crate's own encoder.
+pub(crate) const MAX_INTERNED: usize = 4096;
 
 static INTERNED: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
 
@@ -86,13 +95,14 @@ where
 }
 
 /// `serialize_with`/`deserialize_with` for `Attrs::extra`: a
-/// `Vec<(&'static str, AttrValue)>` that behaves like a sorted map. Written
-/// as a map (`serialize_map`) so the wire format reflects that shape;
-/// insertion order — the sorted-by-key invariant `Node::set` maintains — is
-/// preserved by both bincode and JSON, so no re-sort is needed on the way
-/// back in. Keys are interned on deserialize.
+/// `Vec<(Cow<'static, str>, AttrValue)>` that behaves like a sorted map.
+/// Written as a map (`serialize_map`) of plain strings so the wire format
+/// reflects that shape; insertion order — the sorted-by-key invariant
+/// `Node::set` maintains — is preserved by both bincode and JSON, so no
+/// re-sort is needed on the way back in. Keys are never interned (see the
+/// module docs): a decoded key is owned.
 pub(crate) fn serialize_extra<S>(
-    extra: &[(&'static str, AttrValue)],
+    extra: &[(Cow<'static, str>, AttrValue)],
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -100,7 +110,7 @@ where
 {
     let mut map = serializer.serialize_map(Some(extra.len()))?;
     for (key, value) in extra {
-        map.serialize_entry(key, value)?;
+        map.serialize_entry(key.as_ref(), value)?;
     }
     map.end()
 }
@@ -108,7 +118,7 @@ where
 struct ExtraVisitor;
 
 impl<'de> Visitor<'de> for ExtraVisitor {
-    type Value = Vec<(&'static str, AttrValue)>;
+    type Value = Vec<(Cow<'static, str>, AttrValue)>;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("a map of attribute keys to values")
@@ -120,8 +130,7 @@ impl<'de> Visitor<'de> for ExtraVisitor {
     {
         let mut out = Vec::with_capacity(map.size_hint().unwrap_or(0));
         while let Some((key, value)) = map.next_entry::<String, AttrValue>()? {
-            let key = intern(&key).map_err(serde::de::Error::custom)?;
-            out.push((key, value));
+            out.push((Cow::Owned(key), value));
         }
         Ok(out)
     }
@@ -129,7 +138,7 @@ impl<'de> Visitor<'de> for ExtraVisitor {
 
 pub(crate) fn deserialize_extra<'de, D>(
     deserializer: D,
-) -> Result<Vec<(&'static str, AttrValue)>, D::Error>
+) -> Result<Vec<(Cow<'static, str>, AttrValue)>, D::Error>
 where
     D: Deserializer<'de>,
 {

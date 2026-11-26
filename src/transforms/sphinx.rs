@@ -13,7 +13,11 @@ use unicode_normalization::UnicodeNormalization;
 use super::state::NodeView;
 use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
+use crate::diagnostics::Category;
 use crate::doctree::{is_text_element, kinds, AttrValue};
+use crate::read::BuildDate;
+use crate::rst::{LogLocation, SphinxCrash};
+use crate::utils::py_repr_str;
 
 /// 010-018 `ApplySourceWorkaround` (`SP/sphinx/transforms/__init__.py:237-245`,
 /// `SP/sphinx/util/nodes.py:127-216`), its rawsource half: every
@@ -89,6 +93,43 @@ fn strip_classifiers(tree: &mut TxTree, term: TxId) {
         rawsource = pattern.replace_all(&rawsource, "").into_owned();
     }
     tree.node_mut(term).set_rawsource(&rawsource);
+}
+
+/// 010-034 `PreserveTranslatableMessages` (`SP/sphinx/transforms/i18n.py:103-111`):
+/// every `translatable` node of the tree keeps its original messages
+/// (`preserve_original_messages`) before `Locale` (020) could translate
+/// them, on every read, message catalogs or not. Sphinx's one
+/// `translatable` class is `toctree` (`SP/sphinx/addnodes.py:58-70`): its
+/// entries' titles, those that are not empty, go into `rawentries`, a list
+/// it starts when the node has none (`setdefault`), and its caption, when
+/// it has one, into `rawcaption`. Nothing later in the read changes them.
+///
+/// The parse stores a toctree without a caption the way pformat prints
+/// docutils' `None`, as `caption="True"`, so the caption is read as the
+/// resolve pass reads it ([`crate::env::toctree::caption_of`]): one that
+/// reads `True` is taken for none and gets no `rawcaption`.
+pub struct PreserveTranslatableMessages;
+
+impl Transform for PreserveTranslatableMessages {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        for toctree in tree.findall(tree.root(), |node| node.kind == kinds::TOCTREE) {
+            let node = tree.node_mut(toctree);
+            let mut rawentries = match node.get("rawentries") {
+                Some(AttrValue::List(rawentries)) => rawentries.clone(),
+                _ => Vec::new(),
+            };
+            rawentries.extend(
+                crate::env::toctree::entries_of(node.get("entries"))
+                    .into_iter()
+                    .filter_map(|(title, _)| title.filter(|title| !title.is_empty())),
+            );
+            node.set("rawentries", AttrValue::List(rawentries));
+            if let Some(caption) = crate::env::toctree::caption_of(node.get("caption")).cloned() {
+                node.set("rawcaption", AttrValue::Str(caption));
+            }
+        }
+    }
 }
 
 /// 210-021 `MoveModuleTargets` (`SP/sphinx/transforms/__init__.py:153-175`):
@@ -217,8 +258,11 @@ impl Transform for TranslationProgressTotaliser {
 /// The first block takes the quote's ids, classes and names
 /// ([`TxTree::replace_self`]). An empty quote qualifies too (`all()` of
 /// nothing is true) and is removed: the parse keeps a quote whose content
-/// makes no node, as docutils does. One with a basic attribute stays,
-/// since removing it crashes Sphinx (decision 13).
+/// makes no node, as docutils does. Removing one with a basic attribute
+/// (the class of an epigraph or a `rst-class` whose content makes no node)
+/// crashes Sphinx 9.1.0: `replace_self([])` asserts that no basic
+/// attribute is lost (`SP/docutils/nodes.py:1110-1132`), so the read
+/// fails there (decision 13).
 ///
 /// The loop is `for node in self.document.findall(nodes.block_quote)`, a
 /// live walk, which goes on from where the quote was, as the generator
@@ -239,22 +283,18 @@ impl Transform for HandleCodeBlocks {
             let doctest_only = blocks
                 .iter()
                 .all(|&block| tree.node(block).kind == kinds::DOCTEST_BLOCK);
-            // Replacing an empty quote that has a basic attribute (the
-            // class of an epigraph whose content makes no node) crashes
-            // Sphinx 9.1.0: `replace_self([])` asserts that no basic
-            // attribute is lost (`AssertionError: Losing "classes"
-            // attribute`). Inputs that crash Sphinx are not modelled
-            // (decision 13: the build exits 2, T17a), so the quote stays
-            // and the walk goes on as past any quote it keeps.
-            let attrs = &tree.node(quote).attrs;
-            let crashes_sphinx = blocks.is_empty()
-                && !(attrs.ids.is_empty()
-                    && attrs.classes.is_empty()
-                    && attrs.names.is_empty()
-                    && attrs.dupnames.is_empty());
-            if !doctest_only || crashes_sphinx {
+            if !doctest_only {
                 next = tree.next_node(quote, is_quote, false, true, true, true);
                 continue;
+            }
+            if blocks.is_empty() {
+                if let Some(message) = losing_basic_attribute(tree.node(quote)) {
+                    cx.crash(
+                        SphinxCrash::python("AssertionError", message, LogLocation::None),
+                        quote,
+                    );
+                    return;
+                }
             }
             let parent = tree
                 .parent(quote)
@@ -276,6 +316,27 @@ impl Transform for HandleCodeBlocks {
             next = next_after(tree, walked, is_quote);
         }
     }
+}
+
+/// The assertion `replace_self` fails replacing `node` by nothing
+/// (`SP/docutils/nodes.py:1124-1130`): `Losing "<att>" attribute:
+/// <value>` for the first of docutils' basic attributes — `ids`,
+/// `classes`, `names`, `dupnames` — the node holds a value of, the list
+/// as Python prints it; `None` when it holds none.
+fn losing_basic_attribute(node: &TxNode) -> Option<String> {
+    let attrs = &node.attrs;
+    [
+        ("ids", &attrs.ids),
+        ("classes", &attrs.classes),
+        ("names", &attrs.names),
+        ("dupnames", &attrs.dupnames),
+    ]
+    .into_iter()
+    .find(|(_, values)| !values.is_empty())
+    .map(|(name, values)| {
+        let values: Vec<String> = values.iter().map(|value| py_repr_str(value)).collect();
+        format!("Losing \"{name}\" attribute: [{}]", values.join(", "))
+    })
 }
 
 /// The first node `pred` accepts after the subtree at `id` in pre-order,
@@ -476,7 +537,10 @@ impl Transform for DefaultSubstitutions {
             let Some(name) = name.filter(|name| to_handle.contains(name)) else {
                 continue;
             };
-            let text = default_substitution(cx, name);
+            let name = name.to_string();
+            let Some(text) = default_substitution(cx, &name, reference) else {
+                return;
+            };
             let node = cx.tree.new_node(kinds::TEXT);
             cx.tree.node_mut(node).text = Some(text);
             cx.tree.replace_self(reference, vec![node]);
@@ -485,15 +549,24 @@ impl Transform for DefaultSubstitutions {
 }
 
 /// `DefaultSubstitutions._handle_default_substitution`: the text of the
-/// default substitution `name`. `|today|` is the `today` setting when it
-/// is set, otherwise the build date as `format_date` formats it with
-/// `today_fmt`, or with `en`'s `'%b %d, %Y'` when that is unset or empty
-/// ([`format_date`]); `|version|` and `|release|` are the settings, empty
-/// by default; `|translation progress|` is calculated from the stamp 025
-/// left on the document ([`translation_progress`]).
-fn default_substitution(cx: &TransformCx<'_>, name: &str) -> String {
+/// default substitution `name`, which `reference` names. `|today|` is the
+/// `today` setting when it is set, otherwise the build date as
+/// `format_date` formats it with `today_fmt`, or with `en`'s
+/// `'%b %d, %Y'` when that is unset or empty ([`format_date`]);
+/// `|version|` and `|release|` are the settings, empty by default;
+/// `|translation progress|` is calculated from the stamp 025 left on the
+/// document ([`translation_progress`]).
+///
+/// `None` once `format_date` has crashed Sphinx 9.1.0 (decision 13),
+/// where the reference is: on a build date in a year Python's `datetime`
+/// does not hold ([`BuildDate::OutOfRange`]), which it converts first; or
+/// on a token babel rejects, `%U` or `%W`, for which `babel_format_date`
+/// (`SP/sphinx/util/i18n.py:225-253`) takes the `ValueError` for an
+/// unknown locale, warns `Invalid Babel locale` and formats again in
+/// `en`, which raises it again.
+fn default_substitution(cx: &mut TransformCx<'_>, name: &str, reference: TxId) -> Option<String> {
     let settings = cx.settings;
-    match name {
+    Some(match name {
         "translation progress" => {
             let root = cx.tree.node(cx.tree.root());
             translation_progress(root.str_attr("translation_progress"))
@@ -505,11 +578,40 @@ fn default_substitution(cx: &TransformCx<'_>, name: &str) -> String {
                 .as_deref()
                 .filter(|format| !format.is_empty())
                 .unwrap_or("%b %d, %Y");
-            format_date(format, settings.build_date)
+            let date = match settings.build_date {
+                BuildDate::Date(date) => date,
+                BuildDate::OutOfRange(year) => {
+                    let message = format!("year {year} is out of range");
+                    cx.crash(
+                        SphinxCrash::python("ValueError", message, LogLocation::None),
+                        reference,
+                    );
+                    return None;
+                }
+            };
+            match format_date(format, date) {
+                Ok(today) => today,
+                Err(BabelRejects) => {
+                    // `if not locale: locale = 'en'`.
+                    let locale = Some(settings.language.as_str())
+                        .filter(|language| !language.is_empty())
+                        .unwrap_or("en");
+                    cx.warn_unlocated(
+                        format!("Invalid Babel locale: {}.", py_repr_str(locale)),
+                        Category::from_parts(Some("i18n"), Some("babel")),
+                    );
+                    let message = "Invalid length for field: 'WW'".to_string();
+                    cx.crash(
+                        SphinxCrash::python("ValueError", message, LogLocation::None),
+                        reference,
+                    );
+                    return None;
+                }
+            }
         }
         "version" => settings.version.clone(),
         _ => settings.release.clone(),
-    }
+    })
 }
 
 /// `_calculate_translation_progress` (`SP/sphinx/transforms/__init__.py:140-150`)
@@ -536,6 +638,11 @@ fn translation_progress(stamp: Option<&str>) -> String {
     }
 }
 
+/// babel rejecting a pattern `format_date` maps a strftime token to:
+/// `ValueError: Invalid length for field: 'WW'` for `%U` and `%W`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct BabelRejects;
+
 /// Sphinx's `format_date(format, date=date, language='en')`
 /// (`SP/sphinx/util/i18n.py:177-313`): `format` split on the strftime
 /// tokens of `date_format_mappings`, in that table's order, each token
@@ -544,9 +651,8 @@ fn translation_progress(stamp: Option<&str>) -> String {
 ///
 /// Only `en` is ported; another `language` formats as `en` (a documented
 /// divergence, T19a). Two tokens map to the pattern `WW`, which babel
-/// rejects, so Sphinx crashes on `%U` and `%W`; such inputs are not
-/// modelled (decision 13), and the two stay as written.
-pub(crate) fn format_date(format: &str, date: DateTime<Utc>) -> String {
+/// rejects, in every language: [`BabelRejects`] for the first of them.
+pub(crate) fn format_date(format: &str, date: DateTime<Utc>) -> Result<String, BabelRejects> {
     let mut formatted = String::new();
     let mut rest = format;
     while let Some(first) = rest.chars().next() {
@@ -555,7 +661,7 @@ pub(crate) fn format_date(format: &str, date: DateTime<Utc>) -> String {
             .find(|(token, _)| rest.starts_with(*token));
         match token {
             Some(&(token, field)) => {
-                formatted.push_str(&babel_en(field, date).unwrap_or_else(|| token.to_string()));
+                formatted.push_str(&babel_en(field, date).ok_or(BabelRejects)?);
                 rest = &rest[token.len()..];
             }
             None => {
@@ -564,7 +670,7 @@ pub(crate) fn format_date(format: &str, date: DateTime<Utc>) -> String {
             }
         }
     }
-    formatted
+    Ok(formatted)
 }
 
 /// What one strftime token of `date_format_mappings` formats in `en`.
@@ -828,6 +934,70 @@ mod tests {
         tree.into_doctree()
     }
 
+    /// `PreserveTranslatableMessages` (010-034) keeps a toctree's entry
+    /// titles as `rawentries` and its caption as `rawcaption`; with
+    /// neither, `rawentries` is empty and there is no `rawcaption`. The
+    /// node the directive makes has neither attribute: the parse leaves
+    /// them to the read.
+    //
+    // oracle: the env fixture's `smartquotes_resolved` project (Sphinx
+    //   9.1.0): `tocs_pformat["index"]`'s toctree, exactly as the first
+    //   row's transformed tag; `TocTree.run`
+    //   (`SP/sphinx/directives/other.py:64-87`) sets neither attribute.
+    #[test]
+    fn preserve_translatable_messages_keeps_a_toctrees_titles_and_caption() {
+        fn toctree_tag(node: &Node) -> Option<String> {
+            if node.kind == kinds::TOCTREE {
+                return Some(crate::doctree::pformat::starttag(node));
+            }
+            node.children.iter().find_map(toctree_tag)
+        }
+        let found: std::collections::BTreeSet<String> =
+            ["index", "a", "b"].map(String::from).into();
+        let options = ParseOptions {
+            found_docs: Some(std::sync::Arc::new(found)),
+            ..index_rst()
+        };
+        let rows: [(&str, &str, &str); 2] = [
+            (
+                ".. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \
+                 \"Explicit\" title -- b <b>\n",
+                "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
+                 ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
+                 includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
+                 parent=\"index\" titlesonly=\"0\">",
+                "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
+                 ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
+                 includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
+                 parent=\"index\" rawcaption=\"\"Contents\" -- here\" \
+                 rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">",
+            ),
+            (
+                ".. toctree::\n\n   a\n   b\n",
+                "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
+                 hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
+                 numbered=\"0\" parent=\"index\" titlesonly=\"0\">",
+                "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
+                 hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
+                 numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">",
+            ),
+        ];
+        for (rst, parsed, preserved) in rows {
+            let doctree = crate::rst::parse_rst(rst, &options);
+            assert_eq!(
+                toctree_tag(&doctree.root).as_deref(),
+                Some(parsed),
+                "{rst:?}"
+            );
+            let doctree = apply_row(doctree, TransformId::PreserveTranslatableMessages);
+            assert_eq!(
+                toctree_tag(&doctree.root).as_deref(),
+                Some(preserved),
+                "{rst:?}"
+            );
+        }
+    }
+
     /// `HandleCodeBlocks` (210-022, `SP/sphinx/transforms/__init__.py:178-197`)
     /// replaces every block quote whose children are all doctest blocks by
     /// those blocks, and leaves one with anything else in it.
@@ -851,7 +1021,8 @@ mod tests {
     /// two `.. default-domain::` rows reach the same walk through the read:
     /// the parse keeps the quote the directive leaves empty, and Sphinx
     /// 9.1.0 skips a section after it, subtree included, or a paragraph.
-    /// An empty quote with a class, which crashes Sphinx, stays.
+    /// An empty quote with a class crashes Sphinx where the walk reaches
+    /// it, and only there: one the walk skips stays.
     #[test]
     fn handle_code_blocks_unwraps_doctest_only_block_quotes() {
         let rows: [(&str, &str); 7] = [
@@ -907,15 +1078,53 @@ mod tests {
         }
         // An empty quote with a basic attribute, the class of an epigraph
         // whose content makes no node, crashes Sphinx 9.1.0: `replace_self`
-        // with no node asserts that no basic attribute is lost
-        // (`AssertionError: Losing "classes" attribute: ['epigraph']`).
-        // Inputs that crash Sphinx are not modelled (decision 13: the build
-        // exits 2, T17a), so 210 leaves the quote where it is.
+        // with no node asserts that no basic attribute is lost, naming the
+        // first of `ids`, `classes`, `names` and `dupnames` that holds a
+        // value (decision 13). The read stops there, where the quote is. An
+        // empty epigraph the walk skips, after an empty quote it removed,
+        // does not crash it (probed: exit 0).
+        let crash = |rst: &str| {
+            let parsed = crate::rst::parse_rst_full(rst, &index_rst());
+            let settings = ReadSettings::sphinx_defaults();
+            let read = read_transforms_with(
+                parsed,
+                &settings,
+                "index",
+                Path::new("<SRCDIR>"),
+                &TransformId::transform,
+            );
+            read.state()
+                .crash
+                .as_ref()
+                .map(|crash| (crash.to_string(), crash.rendered_location.clone()))
+        };
         assert_eq!(
-            stage_r("Para.\n\n.. epigraph::\n\n   .. default-domain:: py\n"),
-            format!(
-                "{DOC}    <paragraph>\n        Para.\n    <block_quote classes=\"epigraph\">\n"
-            )
+            crash("Para.\n\n.. epigraph::\n\n   .. default-domain:: py\n"),
+            Some((
+                "AssertionError: Losing \"classes\" attribute: ['epigraph']".to_string(),
+                Some("<SRCDIR>/index.rst:5".to_string())
+            ))
+        );
+        let mut quote = TxTree::from_parse(
+            Doctree {
+                root: element(kinds::BLOCK_QUOTE, Vec::new()),
+                sources: Vec::new(),
+            },
+            &mut DocumentState::default(),
+        );
+        let root = quote.root();
+        quote.node_mut(root).attrs.dupnames.push("d".to_string());
+        quote.node_mut(root).attrs.names.push("it's".to_string());
+        assert_eq!(
+            losing_basic_attribute(quote.node(root)).as_deref(),
+            Some("Losing \"names\" attribute: [\"it's\"]")
+        );
+        assert_eq!(
+            crash(
+                "Para.\n\n   .. default-domain:: py\n\n.. epigraph::\n\n   \
+                 .. default-domain:: py\n\nText.\n"
+            ),
+            None
         );
 
         fn element(kind: &'static str, children: Vec<Node>) -> Node {
@@ -1327,8 +1536,10 @@ mod tests {
                 today_fmt: today_fmt.map(str::to_string),
                 version: version.to_string(),
                 release: release.to_string(),
-                build_date: chrono::DateTime::from_timestamp(1_700_000_000, 0)
-                    .expect("a representable date"),
+                build_date: BuildDate::Date(
+                    chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                        .expect("a representable date"),
+                ),
                 ..harness_settings(true)
             };
         let rows: [(&str, ReadSettings, &str); 4] = [
@@ -1397,6 +1608,18 @@ mod tests {
                 .and_utc()
         };
         let sunday = at(2026, 1, 4, 15, 7, 9);
+        // `%U` and `%W` map to `WW`, which babel rejects, wherever they
+        // stand in the format.
+        for format in ["%U", "%W", "%Y week %W", "%W %U"] {
+            assert_eq!(
+                super::format_date(format, sunday),
+                Err(BabelRejects),
+                "{format:?}"
+            );
+        }
+        let format_date = |format: &str, date| {
+            super::format_date(format, date).expect("babel formats every other token")
+        };
         for (format, formatted) in [
             ("%a", "Sun"),
             ("%A", "Sunday"),

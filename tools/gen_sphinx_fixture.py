@@ -43,7 +43,10 @@ produces (probes doc, "TRAP" finding).
 Pinned configuration (recorded in the fixture header, asserted at runtime):
   - conf.py: extensions=[], master_doc='index', exclude_patterns=['_build']
   - confoverrides: smartquotes=False  (Sphinx enables docutils smartquotes by
-    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha)
+    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha).
+    The `sx_smartquotes` family (wave 5a T16b) is read with them off too:
+    tools/gen_smartquotes_fixture.py --variant reads the whole corpus again
+    with them on, into tests/fixtures/sphinx_smartquotes_differential.json.
   - confoverrides: keep_warnings=True (FilterSystemMessages keeps WARNING(2)/
     ERROR(3)/SEVERE(4) system_messages in-tree like the wave-1/2 fixtures;
     DEBUG(0)/INFO(1) are still stripped -- probes doc FilterSystemMessages
@@ -60,7 +63,10 @@ Pinned configuration (recorded in the fixture header, asserted at runtime):
     and directive registries are process-global: a case's `.. role::` (or a
     `.. default-role::` while `default_role` is unset) would otherwise leak
     into every later case of its app (wave-5 research, roles/config report
-    §6.1, probe P25)
+    §6.1, probe P25); the role functions' `options`/`content` attributes
+    are restored after every parse too, since a Sphinx role stores each
+    call's options there and `.. role::` parses its options against them
+    (`probe_namespace`)
   - default_role: `app.config.default_role`, passed to the parse the way
     `Builder.read_doc` passes it (`sphinx/builders/__init__.py:656`)
 
@@ -138,9 +144,11 @@ SphinxTestApp is constructed per DISTINCT conf dict (cases grouped by their
 JSON-serialized conf, mirroring the [SIG] appendix probe scripts) so fifty
 conf cases do not spin fifty apps; the base settings assertions run against
 every app. The fixture schema emits "conf" on a case ONLY when non-empty —
-absent means defaults — and the Rust consumer maps every conf key onto
-ParseOptions.py (PySigConfig), ERRORING on unmapped keys so a future conf
-addition here fails loudly there instead of silently parsing under defaults.
+absent means defaults — and the Rust consumers map every conf key onto
+the parse options (ParseOptions.py, PySigConfig, or ParseOptions.read,
+ReadConfig: tests/support/fixture_conf.rs, wave 5a T17a), ERRORING on
+unmapped keys so a future conf addition here fails loudly there instead of
+silently parsing under defaults.
 
 WAVE-4.5 EXCLUSIONS (py-domain corpus; every entry in EXCLUDED below carries
 its reason and the assert keeps CASES disjoint from it — see that dict).
@@ -313,6 +321,36 @@ SUPPORTED_KINDS = {
     "literal_strong",
     "literal_emphasis",
     "pending_xref_condition",
+    # wave 5a T16b: the smart-quotes family's option list, substitution
+    # definitions and footnotes
+    "option_list",
+    "option_list_item",
+    "option_group",
+    "option",
+    "option_string",
+    "option_argument",
+    "description",
+    "footnote",
+    "footnote_reference",
+    "label",
+    "substitution_definition",
+    # wave 5a T17a: Sphinx's manpage and download roles
+    "manpage",
+    "download_reference",
+    # wave 5a T18a: the structure directives' nodes (`generated` is
+    # SectNum's, T18b; `raw` a custom `raw` role's)
+    "generated",
+    "meta",
+    "decoration",
+    "header",
+    "footer",
+    "raw",
+    # wave 5a T18c: Sphinx's extra directives' nodes
+    "centered",
+    "acks",
+    "tabular_col_spec",
+    "productionlist",
+    "production",
 }
 
 CASES = [
@@ -954,6 +992,372 @@ CASES = [
     # (880) now that the read runs it; `:name:` lands on the figure
     # (Sphinx's Figure override, `sphinx/directives/patches.py`) -----
     ('sx_image', 'figure_name', '.. figure:: pic.png\n   :name: myfig\n\n   Caption.\n'),
+    # ----- wave 5a T16b: the smart-quotes family. Read here with smart
+    # quotes off, as every case is; tools/gen_smartquotes_fixture.py
+    # --variant reads the corpus again with them on. The first 22 are the
+    # research report's proposed cases, verbatim ([SQ] §6.2), the next 7
+    # its blocked cases whose blockers have landed (§6.4): the Sphinx
+    # `code` role (T7), FilterSystemMessages (T9b), AutoNumbering (T12),
+    # Substitutions and Footnotes (T11), version-change content (T16a).
+    # The last pins the Text docutils keeps for a run of escaped whitespace
+    # between inline elements, which is context for the quote after it.
+    # -----
+    ('sx_smartquotes', 'basic_quotes', '"quoted" and \'single\' and it\'s and 80\'s and the \'80s.\n'),
+    ('sx_smartquotes', 'dashes_ellipsis', "En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n"),
+    ('sx_smartquotes', 'nested_and_adjacent_quotes', "\"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n"),
+    ('sx_smartquotes', 'context_punctuation', "He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n"),
+    ('sx_smartquotes', 'apostrophes_decades', "The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n"),
+    ('sx_smartquotes', 'inline_markup_adjacency', 'A *"emph"* and "*emph*" and **"strong"** and "**strong**".\n\nword*"emph"* and *emph*"after" and ``"literal"`` and "``literal``".\n\nx ``lit`` "after literal" and x ``lit``"after literal" and *emph*\'s.\n'),
+    ('sx_smartquotes', 'backslash_escapes', r'''\"escaped double\" and \'escaped single\' and it\'s.
+
+Escaped dashes \-\- and \-- and ellipsis \.\.\. and \... done.
+
+Backslash then quote \\"x" and escaped space x\ "y" and '\a'.
+
+Escaped letter "\a" and \`backtick\` done.
+'''),
+    ('sx_smartquotes', 'escaped_whitespace_context', 'a\\ "b" and "\\ c" and x\\\n"y" end\n'),
+    ('sx_smartquotes', 'escaped_quote_context', 'Escaped-quote context \\""x" and \\\'\'y\' and x\\"-- z.\n'),
+    ('sx_smartquotes', 'title_with_escapes', '\\"Title\\" -- \\-\\-\n==================\n\nBody.\n'),
+    ('sx_smartquotes', 'literal_entities', "Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n"),
+    ('sx_smartquotes', 'docutils_roles', ':emphasis:`"e"` :strong:`\\"s\\"` :title-reference:`"t"` :sup:`"u"` :sub:`"d"` :emphasis:`\\"E\\"`\n'),
+    ('sx_smartquotes', 'xref_explicit_titles', ':ref:`"T" -- x <nolabel>` :doc:`"D" <nodoc>` :ref:`\\"T\\" <nolabel>` :term:`"term" -- t` :ref:`a\\\\\'b <nolabel>`\n'),
+    ('sx_smartquotes', 'xref_in_title_double_pass', 'Title :ref:`a\\\\\'b <nolabel>` x\n------------------------------\n'),
+    ('sx_smartquotes', 'block_elements', '''"Title" -- here
+===============
+
+.. rubric:: "Rubric" -- r
+
+.. topic:: "Topic" title
+
+   "Topic" body.
+
+.. sidebar:: "Side" title
+   :subtitle: "Sub" title
+
+   "Side" body.
+
+.. admonition:: "Admonition" title
+
+   "Admonition" body...
+
+.. note:: "Note" -- body...
+
+Term "one"
+   Definition "one".
+
+Term : "classifier" : 'c2'
+   Definition.
+
+:Field "name": Field "body".
+
+| Line "one" ends
+| "Line" two
+
+   "Quote" body.
+
+   -- "Attribution"
+'''),
+    ('sx_smartquotes', 'skipped_blocks', '''::
+
+   "literal block" -- x...
+
+.. parsed-literal::
+
+   "parsed" *"literal"* :ref:`"T" <nolabel>`
+
+.. code-block:: python
+
+   x = "code"
+
+.. math::
+
+   "math"
+
+.. comment "comment" -- x
+'''),
+    ('sx_smartquotes', 'option_list', '--opt=value      Desc "one" -- x.\n-x arg           Desc \'two\'.\n--long=<"q">     Desc it\'s.\n--a, --b         Two --options.\n'),
+    ('sx_smartquotes', 'standalone_uri_and_email', "See https://example.org/a--b/c---d/e...f and user--x@example.org and https://example.org/it's.\n"),
+    ('sx_smartquotes', 'inline_target', 'An _`"inline" target` and `"phrase" <https://example.org/p--q>`_ here.\n'),
+    ('sx_smartquotes', 'language_classes', '''.. rst-class:: language-de
+
+"Deutsch" und 'einfach'.
+
+.. rst-class:: language-fr
+
+"Français" et 'simple'.
+
+.. rst-class:: language-xx
+
+"Unknown" it's -- y... the '80s.
+
+.. rst-class:: language-xx
+
+"Unknown" again.
+
+.. container:: language-ja
+
+   "Japanese" 'x'.
+
+"English" again.
+'''),
+    ('sx_smartquotes', 'py_docfields', '''.. py:function:: f(x="a", y='b') -> "R"
+
+   Function "body" -- text.
+
+   :param x: The "x" -- param
+   :type x: str
+   :param str y: The 'y'
+   :returns: "ret" value
+   :rtype: int
+   :raises ValueError: if "bad"
+'''),
+    ('sx_smartquotes', 'deprecated_seealso_glossary', '''.. deprecated:: 2.0 "Deprecated" -- now
+
+.. seealso:: "See" this.
+
+.. glossary::
+
+   "Term" -- x
+      Def "x".
+'''),
+    ('sx_smartquotes', 'skipped_inline_nodes', 'A :literal:`"lit"` and :math:`"m"` and `"title ref"` and :code:`"code"`.\n'),
+    ('sx_smartquotes', 'tables', '''+-----------+-----------+
+| "grid"    | 'cell'    |
++===========+===========+
+| it's      | a -- b    |
++-----------+-----------+
+
+.. list-table:: "List" table
+
+   * - "a"
+     - 'b'
+'''),
+    ('sx_smartquotes', 'system_message_paragraphs', '.. bogus:: x\n\nText *unclosed "q".\n'),
+    ('sx_smartquotes', 'substitution_definition_unreferenced', '.. |x| replace:: "plain" -- x\n.. |y| replace:: :ref:`"T" -- t <nolabel>` and "plain"\n'),
+    ('sx_smartquotes', 'versionmodified_cross_paragraph', '.. versionadded:: 1.0\n   First paragraph ends here\n\n   "Second" paragraph.\n'),
+    ('sx_smartquotes', 'substitution_in_context', 'Before |sub| after and |it|.\n\n.. |sub| replace:: "replaced" -- text\n.. |it| replace:: it\'s\n'),
+    ('sx_smartquotes', 'footnote_context', 'Auto [#]_"quoted" and [1]_\'s.\n\n.. [#] Auto "footnote".\n.. [1] Numbered.\n'),
+    ('sx_smartquotes', 'escaped_whitespace_between_inlines', '*a*\\ *"b"* and **c**\\ ``d``\\ "e" and *f*\\\n*"g"*\n'),
+    # ===== sx_sphinx_roles (wave 5a T17a; roles/config report §6.1) =====
+    # The role functions, the role directive and the reference-role split.
+    ('sx_sphinx_roles', 'generic_docroles', ':command:`ls -l` :dfn:`term` :mailheader:`Content-Type` :makevar:`CFLAGS` :mimetype:`text/plain` :newsgroup:`comp.lang.python` :program:`sphinx-build` :regexp:`^a.*b$`\n'),
+    ('sx_sphinx_roles', 'generic_docroles_escapes_case', ':command:`a\\*b \\`x\\``\n\n:program:`!prog` :dfn:`a <b>`\n\n:COMMAND:`upper` `suffix`:makevar:\n'),
+    ('sx_sphinx_roles', 'kbd_compound', ':kbd:`Ctrl`\n\n:kbd:`Ctrl+C`\n\n:kbd:`Ctrl+Alt+Del`\n\n:kbd:`Ctrl-x Ctrl-f`\n'),
+    ('sx_sphinx_roles', 'kbd_multiword', ':kbd:`Caps Lock`\n\n:kbd:`Ctrl+Page Up`\n\n:kbd:`Page Up+Ctrl`\n\n:kbd:`back  space`\n\n:kbd:`Num Lock+x`\n'),
+    ('sx_sphinx_roles', 'kbd_separator_edges', ':kbd:`-`\n\n:kbd:`Ctrl+-`\n\n:kbd:`Ctrl++`\n\n:kbd:`Shift ^ A`\n\n:kbd:`a  b`\n\n:kbd:`M-x  M-y`\n\n:kbd:`a\\+b`\n'),
+    ('sx_sphinx_roles', 'kbd_newline', ':kbd:`Ctrl\n+ Q`\n'),
+    ('sx_sphinx_roles', 'guilabel_accelerators', ':guilabel:`&Cancel`\n\n:guilabel:`O&K`\n\n:guilabel:`Save && Exit`\n\n:guilabel:`A & B`\n\n:guilabel:`\\&Esc`\n\n:guilabel:`&&&Foo`\n\n:guilabel:`Plain`\n'),
+    ('sx_sphinx_roles', 'menuselection', ':menuselection:`Start --> Programs`\n\n:menuselection:`&File --> &Open`\n\n:menuselection:`A-->B`\n\n:menuselection:`A --> B --> C`\n\n:menuselection:`A -> B`\n'),
+    ('sx_sphinx_roles', 'samp_braces', ':samp:`print({x})`\n\n:samp:`a{b}c{d}e`\n\n:samp:`{}`\n\n:samp:`{a{b}c}`\n\n:samp:`a}b{c`\n\n:samp:`{unclosed`\n\n:samp:`plain`\n'),
+    ('sx_sphinx_roles', 'samp_escapes_file', ':samp:`a\\\\{b\\\\}`\n\n:samp:`a\\{b\\}`\n\n:samp:`x\\\\\\\\y`\n\n:file:`/etc/{name}.conf`\n\n:file:`C:\\\\Users\\\\{user}`\n\n:SAMP:`Upper{X}`\n'),
+    ('sx_sphinx_roles', 'abbr_explanations', ':abbr:`LIFO (last-in, first-out)`\n\n:abbr:`LIFO`\n\n:abbr:`LIFO ()`\n\n:abbr:`(only explanation)`\n\n:abbr:`A (b) (c)`\n\n:abbr:`X (multi\nline)`\n\n:abbr:`Y(z)`\n'),
+    ('sx_sphinx_roles', 'manpage_no_url', ':manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`ls.1`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n\n:manpage:`git-commit(1posix)`\n\n:manpage:`a  b(8)`\n'),
+    ('sx_sphinx_roles', 'manpage_url_page_section', ':manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n', {'manpages_url': 'https://man.example/{page}.{section}'}),
+    ('sx_sphinx_roles', 'manpage_url_none_section', ':manpage:`ls(` :manpage:`ls()` :manpage:`ls.` :manpage:`a.b(3)` :manpage:`x(0)`\n', {'manpages_url': 'https://m/{page}/{section}/{path}'}),
+    ('sx_sphinx_roles', 'index_role_forms', 'Para :index:`term` here.\n\n:index:`!main term`\n\n:index:`see <single: a; b>`\n\n:index:`pair <pair: x; y>`\n\n:index:`bad <bogus: x>`\n\n:index:`text <x>`\n'),
+    ('sx_sphinx_roles', 'index_role_shorthand', ':index:`t <a, !b, , c>`\n\n:index:`!x`\n\n:index:`! spaced`\n\n:index:`see also <seealso: p; q>`\n\n:index:`d <double: m; n>`\n\n:index:`! <!z>`\n'),
+    ('sx_sphinx_roles', 'index_role_id_not_registered', 'T\n=\n\n:index:`x`\n\nIndex 0\n-------\n\ntext\n'),
+    ('sx_sphinx_roles', 'index_alias_unimplemented', ':I:`upper`\n\n:i:`alias`\n'),
+    ('sx_sphinx_roles', 'pep_rfc_long_names', ':pep-reference:`8` and :PEP:`0` and :pep:`008` end.\n\n:rfc-reference:`2822` and :RFC:`0002822` and :RFC:`1` end.\n'),
+    ('sx_sphinx_roles', 'pep_rfc_invalid_consumes_serial', ':pep:`abc`\n\n:rfc:`abc`\n\n:pep:`10000`\n\n:pep:`8#anchor`\n\n:pep-reference:`10000`\n'),
+    ('sx_sphinx_roles', 'pep_rfc_edges', ':rfc:`1#section-` :rfc:`1#Section-2` :pep:`x < 8 >` :rfc:`2 #page-3`\n'),
+    ('sx_sphinx_roles', 'code_role_sphinx', ':code:`x = 1`\n\n:code:`a\\*b`\n\n:code:`a\\\\b`\n'),
+    ('sx_sphinx_roles', 'role_directive_code', '.. role:: python(code)\n   :language: python\n\n.. role:: plain(code)\n\n:python:`print(1)`\n\n:plain:`y`\n'),
+    ('sx_sphinx_roles', 'role_directive_over_sphinx_roles', '.. role:: k(kbd)\n   :class: big\n\n.. role:: s(samp)\n\n.. role:: red\n\n.. role:: py3(code)\n   :language: python3\n   :class: x\n\n.. role:: g(guilabel)\n\n.. role:: m(menuselection)\n\n.. role:: d(download)\n\n.. role:: cmd(command)\n   :class: extra\n\n.. role:: ab(abbr)\n\n.. role:: mp(manpage)\n\n.. role:: idx(index)\n\n.. role:: p8(pep)\n\n:k:`Ctrl+C` :s:`a{b}` :red:`alert` :py3:`x=1` :g:`&OK` :m:`A --> B`\n\n:d:`f.txt` :cmd:`ls` :ab:`A (b)` :mp:`ls(1)` :idx:`entry` :p8:`8`\n'),
+    ('sx_sphinx_roles', 'role_directive_over_reference_roles', '.. role:: f(py:func)\n\n.. role:: a(any)\n\n:f:`g` :a:`y`\n'),
+    ('sx_sphinx_roles', 'unknown_domain_std_fallback', ':foo:ref:`lbl` :FOO:Doc:`index` :py:ref:`lbl` :js:doc:`index` :c:option:`-x`\n'),
+    ('sx_sphinx_roles', 'disabled_xrefs', ':ref:`!label` :doc:`!page` :term:`!x` :any:`!y` :keyword:`!k` :numref:`!n`\n\n:option:`!-x` :envvar:`!HOME` :confval:`!c` :token:`!t`\n\n:py:func:`!f` :py:meth:`!m()` :func:`!g` :py:class:`!~a.B` :eq:`!e`\n'),
+    ('sx_sphinx_roles', 'explicit_title_regex', ':doc:`a <b> <c>`\n\n:doc:`x \\<y>`\n\n:doc:`p\\ <q>`\n\n:manpage:`t <u(1)> <v(2)>`\n\n:download:`n <m <o>>`\n'),
+    ('sx_sphinx_roles', 'non_reference_roles_ignore_titles', ':kbd:`a <b>`\n\n:guilabel:`x <y>`\n\n:samp:`x <{y}>`\n\n:abbr:`x <y> (z)`\n\n:program:`a\nb`\n'),
+    ('sx_sphinx_roles', 'other_domain_xref_shapes', ':rst:dir:`code-block` :rst:role:`kbd` :math:numref:`e` :js:func:`f` :js:mod:`m` :c:func:`f` :cpp:func:`f`\n'),
+    ('sx_sphinx_roles', 'unknown_roles', ':std:kbd:`x`\n\n:py:kbd:`x`\n\n:bogus:`x`\n\n:foo:bar:`x`\n'),
+    ('sx_sphinx_roles', 'role_directive_errors', '.. role:: r(ref)\n   :class: special\n\n.. role:: x(bogus)\n\n:r:`lbl` :x:`w`\n'),
+    # ===== sx_config (wave 5a T17a; roles/config report §6.1): the
+    # read-side configuration keys T17a types and the directives that set
+    # the same state; the rst_prolog/rst_epilog cases are T17b's =====
+    ('sx_config', 'default_role_any', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'any'}),
+    ('sx_config', 'default_role_obj_adapter', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'obj'}),
+    ('sx_config', 'default_role_kbd', 'Text `Ctrl+x` and `a <b>` and `y`:literal:.\n', {'default_role': 'kbd'}),
+    ('sx_config', 'default_role_guilabel', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'guilabel'}),
+    ('sx_config', 'default_role_math', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'math'}),
+    ('sx_config', 'default_role_code', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'code'}),
+    ('sx_config', 'default_role_index', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'index'}),
+    ('sx_config', 'default_role_pep_error', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'pep'}),
+    ('sx_config', 'default_role_eq', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'eq'}),
+    ('sx_config', 'default_role_nonexistent', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'nonexistent'}),
+    ('sx_config', 'default_domain_c_roles', '.. default-domain:: c\n\n:func:`f` :type:`T` :macro:`M`\n'),
+    ('sx_config', 'unprefixed_py_directives', '.. module:: m\n\n.. currentmodule:: m\n\n.. data:: d\n\n.. std:envvar:: E\n\n.. py:envvar:: F\n\n.. CLASS:: K\n\n.. function:: f(x)\n'),
+    ('sx_config', 'highlight_language_read_time', '.. code-block::\n\n   y = 2\n\n.. code::\n\n   z = 3\n\nPara::\n\n    x = 1\n', {'highlight_language': 'python3'}),
+    ('sx_config', 'highlight_directive_state', '.. highlight:: c\n   :linenothreshold: 2\n\n.. code-block::\n\n   int c;\n\n.. highlight:: none\n   :force:\n\n.. code-block::\n\n   plain\n'),
+    ('sx_config', 'default_role_directive', 'A `x` here.\n\n.. default-role:: math\n\nB `a^2` here.\n\n.. default-role:: kbd\n\nC `Ctrl+X` here.\n\n.. default-role::\n\nD `z` here.\n\n.. default-role:: bogus\n\nE `w` here.\n\n.. default-role:: code\n\nF `q` here.\n'),
+    ('sx_config', 'default_role_directive_with_conf', 'A `x` here.\n\n.. default-role::\n\nD `z` here.\n', {'default_role': 'any'}),
+    ('sx_config', 'primary_domain_none', '.. function:: f(x)\n\n.. class:: C\n\n:func:`f` :class:`C` :data:`d` :mod:`m` :exc:`E` :type:`T` :obj:`o`\n', {'primary_domain': None}),
+    ('sx_config', 'default_domain_nonexistent', '.. default-domain:: nonexistent\n\n:func:`f` :ref:`lbl`\n\n.. function:: g()\n'),
+    # ===== sx_smartquotes, appended (wave 5a T17a; smart-quotes report
+    # §6.4): Sphinx's generic roles, which smart quotes educate unless
+    # their node is a literal =====
+    ('sx_smartquotes', 'generic_sphinx_roles', ':abbr:`"A" (explanation "x")` :guilabel:`"G" --` :menuselection:`"A" --> "B"` :dfn:`"d"` :kbd:`"k"` :file:`"f"` :guilabel:`a\\\\"b`\n'),
+    # ===== sx_config, appended (wave 5a T17b; roles/config report §6.1):
+    # rst_prolog and rst_epilog — the generated message source, a prolog's
+    # role, the epilog joining the last section, the prolog after docinfo
+    # (DocInfo and the MetadataCollector, which removes the docinfo, have
+    # landed) =====
+    ('sx_config', 'rst_prolog_message_source', 'Title\n=====\n\nBody.\n', {'rst_prolog': '*unclosed prolog emphasis\n'}),
+    ('sx_config', 'rst_prolog_role', 'Title\n=====\n\n:python:`print(1)`\n', {'rst_prolog': '.. role:: python(code)\n   :language: python\n'}),
+    ('sx_config', 'rst_epilog_joins_last_section', 'Title\n=====\n\nBody.\n\nSub\n---\n\nLast.\n', {'rst_epilog': '*unclosed epilog emphasis\n'}),
+    ('sx_config', 'rst_prolog_after_docinfo', ':author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n', {'rst_prolog': '*unclosed prolog emphasis\n'}),
+    # ===== sx_config, appended (wave 5a T17b, review fix round 1): the
+    # lines of rst_prolog and rst_epilog as str.splitlines() gives them,
+    # which Sphinx inserts without docutils' string2lines — a tab stays a
+    # tab (which indents nothing), trailing whitespace stays in a
+    # paragraph's inner line, a literal block and a line block, and \f
+    # and \v end a line =====
+    ('sx_config', 'rst_prolog_trailing_spaces_paragraph', 'T\n=\n\nText.\n', {'rst_prolog': 'Para one   \nline two\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_literal', 'T\n=\n\nText.\n', {'rst_prolog': '::\n\n   code   \n   more\n'}),
+    ('sx_config', 'rst_prolog_tab_indented_line', 'T\n=\n\nText.\n', {'rst_prolog': '.. note::\n\tTabbed note.\n'}),
+    ('sx_config', 'rst_prolog_form_feed_vertical_tab', 'T\n=\n\nText.\n', {'rst_prolog': 'one\x0ctwo\x0bthree\n'}),
+    ('sx_config', 'rst_prolog_tab_inside_line', 'T\n=\n\nText.\n', {'rst_prolog': 'a\tb\n'}),
+    ('sx_config', 'rst_prolog_tab_continuation', 'T\n=\n\nText.\n', {'rst_prolog': 'Para\n\tindented\n'}),
+    ('sx_config', 'rst_prolog_tab_directive_content', 'T\n=\n\nText.\n', {'rst_prolog': '.. note::\n\n\tBody.\n'}),
+    ('sx_config', 'rst_prolog_tab_in_literal', 'T\n=\n\nText.\n', {'rst_prolog': '::\n\n   a\tb\n'}),
+    ('sx_config', 'rst_prolog_whitespace_mix', 'T\n=\n\nText |a|.\n', {'rst_prolog': 'Para one   \nline two\n   \n.. |a| replace:: A   \n\n::\n\n   code   \n   more\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_definition_list', 'T\n=\n\nText.\n', {'rst_prolog': 'term   \n   definition   \n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_line_block', 'T\n=\n\nText.\n', {'rst_prolog': '| line one   \n| line two\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_role_option', 'T\n=\n\nUse :py:`x`.\n', {'rst_prolog': '.. role:: py(code)   \n   :language: python   \n'}),
+    ('sx_config', 'rst_epilog_trailing_spaces', 'T\n=\n\nText.\n', {'rst_epilog': 'Last para   \nend   \n'}),
+    # ===== sx_sphinx_roles, appended (wave 5a T17c): the download role
+    # once the DownloadFileCollector (880) runs, which gives a URL target
+    # its `refuri`; no file exists in this harness, so no `filename` =====
+    ('sx_sphinx_roles', 'download_unreadable_and_url', ':download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`f  .txt`\n'),
+    # ===== sx_parts (wave 5a T18a): the structure directives' document-
+    # level effects (research report "structure directives" §6.2): `meta`
+    # inserts at the head of the document, `title` sets the document's
+    # `title` attribute, `header` and `footer` fill the decoration, and the
+    # test directive's INFO message is filtered away. T18b appends the
+    # contents, sectnum and target-notes cases =====
+    ('sx_parts', 'meta_basic', 'Title\n=====\n\n.. meta::\n   :description: The reStructuredText plaintext markup language\n   :keywords: plaintext, markup language\n\nBody.\n'),
+    ('sx_parts', 'meta_attrs', 'Title\n=====\n\nBody.\n\n.. meta::\n   :description lang=en: An amusing story\n   :description lang=fr: Une histoire amusante\n   :http-equiv=Content-Type: text/html; charset=ISO-8859-1\n   :name=keywords scheme=X: a, b\n   :property=og:title: OG <&> "q"\n'),
+    ('sx_parts', 'meta_before_title', '.. meta::\n   :keywords: first\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'meta_in_section_nested', 'Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n'),
+    ('sx_parts', 'meta_errors', 'Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n'),
+    ('sx_parts', 'title_errors', '.. title::\n\n.. title:: one\n   :x: y\n\n.. title:: first\n.. title:: second\n\nT\n=\n\nb\n'),
+    ('sx_parts', 'header_footer', '.. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n'),
+    ('sx_parts', 'header_footer_errors', '.. header::\n\n.. footer::\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'header_in_section', 'Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n'),
+    ('sx_parts', 'meta_only_metas', '.. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n'),
+    ('sx_parts', 'meta_bad_tokens', '.. meta::\n   :name=: x\n\n.. meta::\n   :description lang="unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b="c"d: e\n\n.. meta::\n   :a b=: e\n'),
+    ('sx_parts', 'meta_line_after_blank_lines', 'Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n'),
+    ('sx_parts', 'title_no_section', '.. title:: Only Title\n\nJust a paragraph.\n'),
+    ('sx_parts', 'test_directive', '.. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n\nAfter.\n'),
+    ('sx_parts', 'header_with_targets', '.. header:: See `x <https://x.example/>`_ and y_.\n\n.. _y: https://y.example/\n\nTitle\n=====\n\nBody.\n'),
+    # ===== sx_plain, appended (wave 5a T18a): docutils' delimiter class
+    # holds ranges, the dashes and the ellipsis among them =====
+    ('sx_plain', 'inline_dash_and_ellipsis_after_end_string', 'Types of *b*—but, **b**–x, ``b``… and *b*―y.\n'),
+    ('sx_plain', 'inline_dash_and_ellipsis_before_start_string', 'x —*b* y, x—*b*—y and x…``b``…y.\n'),
+    # ===== sx_parts, appended (wave 5a T18a): metas and the decoration
+    # are PreBibliographic, so a field list after them, or before a meta,
+    # is still the docinfo DocInfo (340) makes and the metadata collector
+    # (880) pops =====
+    ('sx_parts', 'meta_before_docinfo', '.. meta::\n   :keywords: k\n\n:author: Me\n:date: 2020\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'header_before_docinfo', '.. header:: H\n\n:author: Me\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'docinfo_then_meta', ':author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n'),
+    # ===== sx_parts, appended (wave 5a T18a, fix round 3): docutils
+    # appends a top-level bullet list to the document before it parses the
+    # first item, so a meta in the item goes after the metas before the
+    # list and before the list =====
+    ('sx_parts', 'meta_in_list_after_meta', '.. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n'),
+    # ===== sx_parts, appended (wave 5a T18b): the pending transforms
+    # TargetNotes (540), SectNum (710) and Contents (720) (research report
+    # "structure directives" §6.2, the contents, sectnum and target-notes
+    # cases; `contents_xref_titles` without its `:doc:` role and toctree,
+    # which need a second document, and `contents_title_markup` without
+    # its image; the report's per-case `language` cases stay out, since the
+    # harness pins `language` 'en' for every app) =====
+    ('sx_parts', 'contents_basic', 'Title\n=====\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_local', 'Title\n=====\n\n.. contents::\n   :local:\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_depth1', 'Title\n=====\n\n.. contents::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_title_arg', 'Title\n=====\n\n.. contents:: Table of *Contents*\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_backlinks_top', 'Title\n=====\n\n.. contents::\n   :backlinks: top\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_backlinks_none', 'Title\n=====\n\n.. contents::\n   :backlinks: none\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_class', 'Title\n=====\n\n.. contents:: On this page\n   :local:\n   :class: this-page Fancy\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_before_title', '.. contents::\n\nTitle\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_local_toplevel', '.. contents::\n   :local:\n   :depth: 1\n\nOne\n===\n\n1a\n--\n\nTwo\n===\n'),
+    ('sx_parts', 'contents_no_sections', 'Para before.\n\n.. contents::\n\nPara after.\n'),
+    ('sx_parts', 'contents_local_no_subsections', 'Title\n=====\n\n.. contents::\n   :local:\n\nOnly text.\n'),
+    ('sx_parts', 'contents_in_sidebar', 'Title\n=====\n\n.. sidebar:: Side\n\n   .. contents::\n      :local:\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_inside_only', 'Title\n=====\n\n.. only:: html\n\n   .. contents::\n      :local:\n\n.. only:: latex\n\n   .. topic:: T\n\n      body\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_only_sections', 'Title\n=====\n\n.. contents::\n\n.. only:: html\n\n   Inside Only\n   -----------\n\n   x\n\nAfter\n-----\n'),
+    ('sx_parts', 'contents_in_admonition', 'Title\n=====\n\n.. note::\n\n   .. contents::\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_bad_options', 'Title\n=====\n\n.. contents::\n   :depth: -1\n\n.. contents::\n   :backlinks: bogus\n\n.. contents::\n   :depth: two\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_name_clash', 'Contents\n========\n\n.. contents::\n\n.. contents::\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_then_section_named_contents', 'Title\n=====\n\n.. contents::\n\nContents\n--------\n\nx\n'),
+    ('sx_parts', 'contents_label_clash_with_sections', 'Title\n=====\n\n.. contents::\n\n.. _contents:\n\nSec\n---\n\nsee contents_ and `Contents`_.\n'),
+    ('sx_parts', 'contents_removed_topic_label', 'Para.\n\n.. contents::\n\n.. _contents:\n\nPara two, see contents_.\n'),
+    ('sx_parts', 'contents_and_explicit_target_ids', 'Title\n=====\n\n.. contents::\n\n.. _lbl:\n\nSection A\n---------\n\nSection B\n---------\n\nSection B\n---------\n'),
+    ('sx_parts', 'contents_xref_titles', 'Title\n=====\n\n.. contents::\n\n.. _lab:\n\nSee :ref:`lab`\n--------------\n\nThe :py:func:`len` function\n---------------------------\n\nAn ``:abbr:`` :abbr:`LIFO (last-in, first-out)` title\n-----------------------------------------------------\n'),
+    ('sx_parts', 'contents_index_role_title', 'Title\n=====\n\n.. contents::\n\nThe :index:`spam` section\n-------------------------\n\nx\n'),
+    ('sx_parts', 'contents_title_markup', 'Title\n=====\n\n.. contents::\n\nA `link <https://example.org/>`_ title\n--------------------------------------\n\nFootnote [#f]_ and *emph* and ``lit``\n-------------------------------------\n\n`Internal`_ ref\n---------------\n\n.. _Internal:\n\nInternal\n--------\n\n.. [#f] Note.\n'),
+    ('sx_parts', 'sectnum_basic', 'Title\n=====\n\n.. sectnum::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_options', 'Title\n=====\n\n.. sectnum::\n   :depth: 2\n   :prefix: A.\n   :suffix: )\n   :start: 3\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_alias', 'Title\n=====\n\n.. section-numbering::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_depth0', 'Title\n=====\n\n.. sectnum::\n   :depth: 0\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_after_sections', 'Title\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n\n.. sectnum::\n'),
+    ('sx_parts', 'sectnum_two', 'Title\n=====\n\n.. sectnum::\n\n.. sectnum::\n   :prefix: X\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_with_contents', 'Title\n=====\n\n.. sectnum::\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_contents_depth', 'Title\n=====\n\n.. sectnum::\n   :depth: 2\n\n.. contents::\n   :local:\n   :depth: 1\n\nA\n-\n\nA1\n~~\n\nB\n-\n'),
+    ('sx_parts', 'sectnum_bad_options', 'Title\n=====\n\n.. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'target_notes_basic', 'Title\n=====\n\nSee Python_ and Docutils_ and Python_ again, and an anonymous__ link and\nan `embedded <https://embedded.example/>`_ one; unused_ is not referenced.\n\n.. _Python: https://www.python.org/\n.. _Docutils: https://docutils.sourceforge.io/\n.. _unused: https://unused.example/\n.. __: https://anon.example/\n.. _alias: Python_\n\nNotes\n-----\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_class', 'Title\n=====\n\nSee Python_ here.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n   :class: custom\n'),
+    ('sx_parts', 'target_notes_dup_uri', 'Title\n=====\n\nSee one_ and two_ and `three <https://same.example/>`__.\n\n.. _one: https://same.example/\n.. _two: https://same.example/\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_with_footnotes', 'Title\n=====\n\nManual [#a]_ and Python_.\n\n.. [#a] Auto footnote.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_bad', 'Title\n=====\n\n.. target-notes:: arg\n\n.. target-notes::\n   :name: x\n\n.. target-notes::\n\n   content\n'),
+    ('sx_parts', 'meta_title_together', '.. title:: HTML Page Title\n.. meta::\n   :description: d\n\n.. header:: H\n\nTitle\n=====\n\n.. contents::\n   :local:\n\n.. sectnum::\n\nSub\n---\n\nSee Python_.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n\n.. footer:: F\n'),
+    # ===== sx_directives, appended (wave 5a T18c; structure-directives
+    # report §3.9): Sphinx's extra directives under the default conf
+    # (`show_authors` off, so the author directives give nothing) —
+    # `cssclass`, the `version-*` spellings, the author directives,
+    # `tabularcolumns`, `centered`, `acks` (a non-list's warning is a
+    # logger record, not in the tree) and the std domain's `productionlist`,
+    # in both spellings =====
+    ('sx_directives', 'cssclass_pending', 'Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n'),
+    ('sx_directives', 'cssclass_content', '.. cssclass:: a B\n\n   Para one.\n\n   Para two.\n'),
+    ('sx_directives', 'cssclass_invalid', '.. cssclass:: !!!\n'),
+    ('sx_directives', 'cssclass_last', 'Para.\n\n.. cssclass:: x\n'),
+    ('sx_directives', 'version_added_alias', '.. version-added:: 1.2\n\n   Some text.\n'),
+    ('sx_directives', 'version_changed_alias', '.. version-changed:: 2.0 Inline *text*.\n'),
+    ('sx_directives', 'version_deprecated_alias', '.. version-deprecated:: 3.0\n'),
+    ('sx_directives', 'version_removed_alias', '.. version-removed:: 4.0\n\n   * a list first\n'),
+    ('sx_directives', 'version_alias_no_argument', '.. version-added::\n'),
+    ('sx_directives', 'authors_hidden', '.. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n'),
+    ('sx_directives', 'authors_errors', '.. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n'),
+    ('sx_directives', 'tabularcolumns', '.. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n'),
+    ('sx_directives', 'tabularcolumns_multiline', '.. tabularcolumns:: |l|\n   L|   \n'),
+    ('sx_directives', 'tabularcolumns_errors', '.. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n'),
+    ('sx_directives', 'centered', '.. centered:: Centered *text* here\n'),
+    ('sx_directives', 'centered_problem', '.. centered:: *unclosed and `bad\n\nAfter.\n'),
+    ('sx_directives', 'centered_errors', '.. centered::\n\n.. centered:: x\n\n   content\n'),
+    ('sx_directives', 'centered_multiline', '.. centered:: line one\n   line two\n'),
+    ('sx_directives', 'acks', '.. acks::\n\n   * Alice\n   * Bob *the builder*\n'),
+    ('sx_directives', 'acks_not_a_list', 'Title\n=====\n\n.. acks::\n\n   not a list\n'),
+    ('sx_directives', 'acks_two_lists', '.. acks::\n\n   * a\n\n   - b\n'),
+    ('sx_directives', 'acks_target_kept', '.. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n'),
+    ('sx_directives', 'acks_problem_in_item', '.. acks::\n\n   * *unclosed\n'),
+    ('sx_directives', 'productionlist', '.. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: "try" ":" `suite`\n            : ("except" [`expression` ["as" `identifier`]] ":" `suite`)+\n'),
+    ('sx_directives', 'productionlist_group', '.. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: "x"\n'),
+    ('sx_directives', 'productionlist_line_continuation', '.. productionlist::\n   a: b \\\n      c\n   d: e\n'),
+    ('sx_directives', 'productionlist_stops_at_a_line_without_colon', '.. productionlist::\n   a: b\n   no colon here\n   c: d\n'),
+    ('sx_directives', 'productionlist_duplicate_name', '.. productionlist::\n   a: b\n   a: c\n'),
+    ('sx_directives', 'productionlist_name_ids', '.. productionlist::\n   Foo Bar: x\n   \u00e9t\u00e9: y\n   !!!: z\n   ???: w\n'),
+    ('sx_directives', 'productionlist_std_prefix', '.. std:productionlist::\n   a: b\n'),
+    ('sx_directives', 'productionlist_on_the_marker_line', '.. productionlist:: a: `b`\n   b: c\n'),
+    ('sx_directives', 'productionlist_errors', '.. productionlist::\n\n.. productionlist:: a: b\n\n   content\n'),
+    ('sx_directives', 'productionlist_tokens', '.. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `\u00e9`\n'),
+    ('sx_directives', 'productionlist_unnamed', '.. productionlist::\n   : a\n   : b\n'),
+    ('sx_directives', 'productionlist_in_note', '.. note::\n\n   .. productionlist::\n      a: b\n'),
+    # ===== sx_smartquotes, appended (wave 5a T18c; smart-quotes report
+    # §6.4): `centered` is a text element smart quotes educate =====
+    ('sx_smartquotes', 'centered_hlist', '.. centered:: "Centered" text\n\n.. hlist::\n\n   * "a"\n   * \'b\'\n'),
 ]
 
 
@@ -1021,11 +1425,35 @@ def make_app(base: Path, conf: dict) -> SphinxTestApp:
     )
 
 
+_MISSING = object()
+
+
+def role_functions():
+    """Every role function docutils' registries hold, once each: the local
+    `_roles` (where Sphinx registers its roles) and the canonical
+    `_role_registry`."""
+    from docutils.parsers.rst import roles
+
+    functions = {}
+    for role in [*roles._roles.values(), *roles._role_registry.values()]:
+        functions[id(role)] = role
+    return list(functions.values())
+
+
 @contextmanager
 def probe_namespace():
     """One probe's own `docutils_namespace()`: the role and directive
     registries it starts from are restored when it ends, so a case's
     `.. role::` or `.. default-role::` cannot leak into the next case.
+
+    So are the `options` and `content` attributes of every registered role
+    function (wave 5a T17a). A Sphinx role instance stores each call's
+    options there (`SphinxRole.__call__`: `self.options = options`), and a
+    `.. role::` directive parses its option block against the base role's
+    `options` (`convert_directive_function`): in a running process, a role
+    used before admits no option. Each case is read as the first document
+    of a fresh build, where every role is as `register_local_role` left it
+    (`{'class': ...}`), whatever the cases before it called.
 
     Leaving a `docutils_namespace()` also unregisters every node class Sphinx
     registered with docutils (`additional_nodes`), which in a real build stay
@@ -1034,12 +1462,23 @@ def probe_namespace():
     needs `visit_index`). The ones registered when the probe starts, the
     app's, are registered again when it ends."""
     registered = list(additional_nodes)
+    attributes = [
+        (role, name, getattr(role, name, _MISSING))
+        for role in role_functions()
+        for name in ("options", "content")
+    ]
     try:
         with docutils_namespace():
             yield
     finally:
         for node in registered:
             register_node(node)
+        for role, name, value in attributes:
+            if value is _MISSING:
+                if name in getattr(role, "__dict__", {}):
+                    delattr(role, name)
+            else:
+                setattr(role, name, dict(value) if isinstance(value, dict) else value)
 
 
 def probe(app: SphinxTestApp, base: Path, rst_text: str, docname: str = "index"):
@@ -1150,6 +1589,10 @@ def generate_sphinx_snippets() -> int:
         "py": 49,
         "pysig": 30,
         "pyconf": 30,
+        "sx_smartquotes": 26,
+        "sx_sphinx_roles": 28,
+        "sx_config": 16,
+        "sx_parts": 16,
     }
     counts: dict = {}
     for case in CASES:
@@ -1194,7 +1637,16 @@ def generate_sphinx_snippets() -> int:
                         bad.append(f"{family}.{name}: unsupported kinds {sorted(stray)}")
                         continue
                     pseudo = normalize(doctree.pformat(), base)
-                    assert pseudo.startswith(f"{DOCUMENT_START_TAG}\n"), (
+                    # A `title` directive's attribute sorts between `source`
+                    # and `translation_progress` (wave 5a T18a).
+                    title = doctree.get("title")
+                    start_tag = (
+                        DOCUMENT_START_TAG
+                        if title is None
+                        else f'<document source="{SOURCE_TOKEN}" title="{title}" '
+                        f"{TRANSLATION_PROGRESS}>"
+                    )
+                    assert pseudo.startswith(f"{start_tag}\n"), (
                         f"{family}.{name}: unexpected document start tag:\n{pseudo}"
                     )
                     record_case = {
@@ -1244,8 +1696,9 @@ def generate_sphinx_snippets() -> int:
         "settings": settings_record,
         "conf_semantics": (
             "a case's optional 'conf' dict is confoverrides applied on top "
-            "of the base settings above; absent = defaults. The consumer "
-            "maps every key onto ParseOptions.py and errors on unmapped keys."
+            "of the base settings above; absent = defaults. The consumers "
+            "map every key onto the parse options (ParseOptions.py or "
+            "ParseOptions.read) and error on unmapped keys."
         ),
         "normalizations": [
             f"srcdir index.rst absolute path -> {SOURCE_TOKEN}",

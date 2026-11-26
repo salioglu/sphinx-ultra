@@ -6498,6 +6498,2413 @@
         "part": "Para `x`__.\n"
       },
       "name": "state.final_position_include"
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [
+          {
+            "entries": [
+              {
+                "category_key": null,
+                "name": "\"Term\" -- x",
+                "subitems": [],
+                "targets": [
+                  [
+                    "main",
+                    "#term-Term-x"
+                  ]
+                ]
+              }
+            ],
+            "group": "Symbols"
+          }
+        ],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": [
+            [
+              "single",
+              "\"Term\" -- x",
+              "term-Term-x",
+              "main",
+              null
+            ]
+          ]
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"doc-a-it-s\" names=\"\"doc\\ a\"\\ --\\ it's\">\n        <title>\n            “Doc A” – it’s\n        <target refid=\"sec-a\">\n        <section ids=\"section-in-a sec-a\" names=\"\"section\"\\ in\\ a sec-a\">\n            <title>\n                “Section” in A\n            <paragraph>\n                Text.\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"doc-b\" names=\"doc\\ 'b'\">\n        <title>\n            Doc ‘B’\n        <paragraph>\n            Text.\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index-title\" names=\"\"index\"\\ --\\ title\">\n        <title>\n            “Index” – title\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <title>\n                    \"Contents\" -- here\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                “Doc A” – it’s\n                        <bullet_list>\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-in-a\" internal=\"1\" refuri=\"#section-in-a\">\n                                        “Section” in A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                \"Explicit\" title -- b\n        <paragraph>\n            See \n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    “Doc A” – it’s\n            , \n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    “T”\n            , \n            <reference internal=\"1\" refuri=\"#sec-a\">\n                <inline classes=\"std std-ref\">\n                    “Section” in A\n            , \n            <reference internal=\"1\" refuri=\"#sec-a\">\n                <inline classes=\"std std-ref\">\n                    “R” – r\n             and\n            <reference internal=\"1\" refid=\"term-Term-x\">\n                <inline classes=\"xref std std-term\">\n                    “Term” – x\n            .\n        <glossary sorted=\"0\">\n            <definition_list classes=\"glossary\">\n                <definition_list_item>\n                    <term ids=\"term-Term-x\">\n                        “Term” – x\n                        <index entries=\"('single',\\ '\"Term\"\\ --\\ x',\\ 'term-Term-x',\\ 'main',\\ None)\">\n                    <definition>\n                        <paragraph>\n                            Def “x”.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ],
+            "sec-a": [
+              "a",
+              "sec-a"
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ],
+            "sec-a": [
+              "a",
+              "sec-a",
+              "“Section” in A"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "index",
+              "labelid": "term-Term-x",
+              "name": "\"Term\" -- x",
+              "objtype": "term"
+            }
+          ],
+          "progoptions": [],
+          "terms": {
+            "\"term\" -- x": [
+              "index",
+              "term-Term-x"
+            ]
+          }
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 2,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                “Doc A” – it’s\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-in-a\" internal=\"1\" refuri=\"a\">\n                        “Section” in A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                Doc ‘B’\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                “Index” – title\n        <bullet_list>\n            <toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawcaption=\"\"Contents\" -- here\" rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "a": "\"Doc A\" -- it's\n===============\n\n.. _sec-a:\n\n\"Section\" in A\n--------------\n\nText.\n",
+        "b": "Doc 'B'\n=======\n\nText.\n",
+        "index": "\"Index\" -- title\n================\n\n.. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \"Explicit\" title -- b <b>\n\nSee :doc:`a`, :doc:`\"T\" <b>`, :ref:`sec-a`, :ref:`\"R\" -- r <sec-a>` and\n:term:`\"Term\" -- x`.\n\n.. glossary::\n\n   \"Term\" -- x\n      Def \"x\".\n"
+      },
+      "name": "smartquotes_resolved"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [
+          {
+            "entries": [
+              {
+                "category_key": null,
+                "name": "environment variable",
+                "subitems": [
+                  {
+                    "name": "E",
+                    "targets": [
+                      [
+                        "",
+                        "#envvar-E"
+                      ]
+                    ]
+                  }
+                ],
+                "targets": []
+              }
+            ],
+            "group": "E"
+          }
+        ],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [
+            [
+              "single",
+              "environment variable; E",
+              "envvar-E",
+              "",
+              null
+            ]
+          ],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            <problematic ids=\"id2\" refid=\"id1\">\n                :std:kbd:`x`\n        <paragraph>\n            <problematic ids=\"id4\" refid=\"id3\">\n                :py:kbd:`x`\n        <paragraph>\n            <problematic ids=\"id6\" refid=\"id5\">\n                :bogus:`x`\n        <paragraph>\n            <problematic ids=\"id8\" refid=\"id7\">\n                :foo:bar:`x`\n        <paragraph>\n            <literal classes=\"kbd\">\n                Ctrl\n            +\n            <literal classes=\"kbd\">\n                X\n        <paragraph>\n            <literal classes=\"kbd\">\n                a\n             \n            <literal classes=\"kbd\">\n                <b>\n        <paragraph>\n            <inline classes=\"guilabel\" rawtext=\":guilabel:`x <y>`\">\n                x <y>\n        <paragraph>\n            <literal classes=\"samp\" role=\"samp\">\n                x <\n                <emphasis>\n                    y\n                >\n        <paragraph>\n            <abbreviation explanation=\"z\">\n                x <y>\n        <paragraph>\n            <literal_strong classes=\"program\">\n                a\n                b\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            <inline classes=\"xref std std-ref\">\n                lbl\n             \n            <problematic ids=\"id2\" refid=\"id1\">\n                :foo:kbd:`x`\n             \n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    Index\n        <index entries=\"('single',\\ 'environment\\ variable;\\ E',\\ 'envvar-E',\\ '',\\ None)\">\n        <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n            <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object std\" ids=\"envvar-E\">\n                <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                    E\n            <desc_content>\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "b",
+              "labelid": "envvar-E",
+              "name": "E",
+              "objtype": "envvar"
+            }
+          ],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:4: ERROR: Unknown interpreted text role \"std:kbd\". [docutils]",
+          "<project>/a.rst:6: ERROR: Unknown interpreted text role \"py:kbd\". [docutils]",
+          "<project>/a.rst:8: ERROR: Unknown interpreted text role \"bogus\". [docutils]",
+          "WARNING: unknown role name: foo:bar",
+          "<project>/a.rst:10: ERROR: Unknown interpreted text role \"foo:bar\". [docutils]",
+          "WARNING: unknown role name: foo:ref",
+          "WARNING: unknown role name: foo:kbd",
+          "<project>/b.rst:4: ERROR: Unknown interpreted text role \"foo:kbd\". [docutils]",
+          "WARNING: unknown role name: foo:doc",
+          "WARNING: unknown directive name: foo:envvar",
+          "WARNING: unknown directive name: foo:note",
+          "<project>/b.rst:8: ERROR: Unknown directive type \"foo:note\".",
+          ".. foo:note:: n [docutils]",
+          "<project>/b.rst:4: WARNING: undefined label: 'lbl' [ref.ref]"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n:std:kbd:`x`\n\n:py:kbd:`x`\n\n:bogus:`x`\n\n:foo:bar:`x`\n\n:KBD:`Ctrl+X`\n\n:kbd:`a <b>`\n\n:guilabel:`x <y>`\n\n:samp:`x <{y}>`\n\n:abbr:`x <y> (z)`\n\n:program:`a\nb`\n",
+        "b": "B\n=\n\n:foo:ref:`lbl` :foo:kbd:`x` :FOO:Doc:`index`\n\n.. foo:envvar:: E\n\n.. foo:note:: n\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"
+      },
+      "name": "roles_dispatch_warnings"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ],
+          "c": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "c": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            "c"
+          ],
+          "c": [
+            "index",
+            "b",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Early \n            <problematic ids=\"id2\" refid=\"id1\">\n                :red:`x`\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Here \n            <inline classes=\"red\">\n                y\n             and \n            <literal classes=\"kbd k\">\n                Ctrl\n            +\n            <literal classes=\"kbd k\">\n                C\n            .\n",
+          "c": "<document source=\"<project>/c.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <paragraph>\n            Later \n            <inline classes=\"red\">\n                z\n             and \n            <literal classes=\"kbd k\">\n                Alt\n            +\n            <literal classes=\"kbd k\">\n                F4\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                C\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "c": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "c": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"c\">\n                C\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b') (None,\\ 'c')\" glob=\"0\" hidden=\"0\" includefiles=\"a b c\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:4: ERROR: Unknown interpreted text role \"red\". [docutils]"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\nEarly :red:`x`.\n",
+        "b": "B\n=\n\n.. role:: red\n\n.. role:: k(kbd)\n\nHere :red:`y` and :k:`Ctrl+C`.\n",
+        "c": "C\n=\n\nLater :red:`z` and :k:`Alt+F4`.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n"
+      },
+      "name": "role_directive_leak"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ],
+          "c": [
+            "index"
+          ],
+          "d": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "c": [],
+          "d": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            "c"
+          ],
+          "c": [
+            "index",
+            "b",
+            "d"
+          ],
+          "d": [
+            "index",
+            "c",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Inline \n            <math>\n                a^2\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Still \n            <math>\n                b^2\n            .\n",
+          "c": "<document source=\"<project>/c.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <paragraph>\n            See \n            <literal classes=\"xref py py-obj\">\n                os.path\n            .\n",
+          "d": "<document source=\"<project>/d.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"d\" names=\"d\">\n        <title>\n            D\n        <paragraph>\n            And \n            <literal classes=\"xref py py-obj\">\n                sys\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                C\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                D\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "c": 1,
+          "d": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "c": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"c\">\n                C\n",
+          "d": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"d\">\n                D\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b') (None,\\ 'c') (None,\\ 'd')\" glob=\"0\" hidden=\"0\" includefiles=\"a b c d\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "a": "A\n=\n\n.. default-role:: math\n\nInline `a^2`.\n",
+        "b": "B\n=\n\nStill `b^2`.\n",
+        "c": "C\n=\n\n.. default-role:: py:obj\n\nSee `os.path`.\n",
+        "d": "D\n=\n\nAnd `sys`.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n   d\n"
+      },
+      "name": "default_role_leak"
+    },
+    {
+      "conf": {
+        "default_role": "literal",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ],
+          "c": [
+            "index"
+          ],
+          "d": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "c": [],
+          "d": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            "c"
+          ],
+          "c": [
+            "index",
+            "b",
+            "d"
+          ],
+          "d": [
+            "index",
+            "c",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Inline \n            <math>\n                a^2\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Still \n            <literal>\n                b^2\n            .\n",
+          "c": "<document source=\"<project>/c.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <paragraph>\n            See \n            <literal classes=\"xref py py-obj\">\n                os.path\n            .\n",
+          "d": "<document source=\"<project>/d.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"d\" names=\"d\">\n        <title>\n            D\n        <paragraph>\n            And \n            <literal>\n                sys\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                C\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                D\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "c": 1,
+          "d": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "c": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"c\">\n                C\n",
+          "d": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"d\">\n                D\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b') (None,\\ 'c') (None,\\ 'd')\" glob=\"0\" hidden=\"0\" includefiles=\"a b c d\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "a": "A\n=\n\n.. default-role:: math\n\nInline `a^2`.\n",
+        "b": "B\n=\n\nStill `b^2`.\n",
+        "c": "C\n=\n\n.. default-role:: py:obj\n\nSee `os.path`.\n",
+        "d": "D\n=\n\nAnd `sys`.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n   d\n"
+      },
+      "name": "default_role_conf_resets"
+    },
+    {
+      "conf": {
+        "default_role": "nonexistent",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            <title_reference>\n                a\n             text.\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n        <paragraph>\n            <title_reference>\n                index\n             text.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a')\" glob=\"0\" hidden=\"0\" includefiles=\"a\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst: WARNING: default role nonexistent not found",
+          "<project>/index.rst: WARNING: default role nonexistent not found"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n`a` text.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n\n`index` text.\n"
+      },
+      "name": "default_role_unknown_conf"
+    },
+    {
+      "conf": {
+        "highlight_language": "python3",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Para:\n        <literal_block force=\"0\" language=\"python3\" linenos=\"0\" xml:space=\"preserve\">\n            x = 1\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" linenos=\"0\" xml:space=\"preserve\">\n            y = 2\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" linenos=\"0\" xml:space=\"preserve\">\n            z = 3\n        <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> 1 + 1\n            2\n        <paragraph>\n            Para2:\n        <literal_block force=\"0\" language=\"c\" linenos=\"1\" xml:space=\"preserve\">\n            int a;\n            int b;\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" linenos=\"0\" xml:space=\"preserve\">\n            int c;\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"ruby\" linenos=\"0\" xml:space=\"preserve\">\n            puts 1\n        <literal_block force=\"0\" language=\"c\" linenos=\"0\" xml:space=\"preserve\">\n            <emphasis>\n                bold\n        <paragraph>\n            Para3:\n        <literal_block force=\"1\" language=\"none\" linenos=\"0\" xml:space=\"preserve\">\n            plain\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" linenos=\"0\" xml:space=\"preserve\">\n            b = 1\n        <paragraph>\n            Para:\n        <literal_block force=\"0\" language=\"python3\" linenos=\"0\" xml:space=\"preserve\">\n            c = 2\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "a": "A\n=\n\nPara::\n\n    x = 1\n\n.. code-block::\n\n   y = 2\n\n.. code::\n\n   z = 3\n\n>>> 1 + 1\n2\n\n.. highlight:: c\n   :linenothreshold: 2\n\nPara2::\n\n    int a;\n    int b;\n\n.. code-block::\n\n   int c;\n\n.. code-block:: ruby\n\n   puts 1\n\n.. parsed-literal::\n\n   *bold*\n\n.. highlight:: none\n   :force:\n\nPara3::\n\n    plain\n",
+        "b": "B\n=\n\n.. code-block::\n\n   b = 1\n\nPara::\n\n    c = 2\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"
+      },
+      "name": "highlight_language_project"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            <literal classes=\"xref js js-func\">\n                f()\n             \n            <literal classes=\"xref js js-meth\">\n                o.m()\n             \n            <literal classes=\"xref js js-class\">\n                K\n             \n            <literal classes=\"xref js js-mod\">\n                m\n             \n            <literal classes=\"xref js js-data\">\n                d\n             \n            <literal classes=\"xref js js-attr\">\n                x\n        <paragraph>\n            <literal classes=\"xref js js-func\">\n                b()\n             and \n            <literal classes=\"xref js js-func\">\n                c()\n             and \n            <problematic ids=\"id2\" refid=\"id1\">\n                :exc:`E`\n             and \n            <inline classes=\"xref std std-ref\">\n                lbl\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a')\" glob=\"0\" hidden=\"0\" includefiles=\"a\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:8: ERROR: Unknown interpreted text role \"exc\". [docutils]",
+          "<project>/a.rst:8: WARNING: undefined label: 'lbl' [ref.ref]"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n.. default-domain:: js\n\n:func:`f` :meth:`o.m` :class:`K` :mod:`m` :data:`d` :attr:`x`\n\n:func:`~a.b` and :func:`.c` and :exc:`E` and :ref:`lbl`\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n"
+      },
+      "name": "primary_domain_js_roles"
+    },
+    {
+      "conf": {
+        "rst_epilog": ".. |esub| replace:: epilog text\n\n*unclosed epilog emphasis\n",
+        "rst_prolog": ".. |psub| replace:: prolog text\n\n*unclosed prolog emphasis\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {
+          "index": [
+            "<project>/missing.png"
+          ]
+        },
+        "files_to_rebuild": {
+          "docinfo": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "docinfo": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "docinfo": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "docinfo"
+          ]
+        },
+        "resolved_pformat": {
+          "docinfo": "<document source=\"<project>/docinfo.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"psub\">\n        prolog text\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <section ids=\"second\" names=\"second\">\n        <title>\n            Second\n        <paragraph>\n            <problematic ids=\"id4\" refid=\"id3\">\n                *\n            unclosed after docinfo\n        <substitution_definition names=\"esub\">\n            epilog text\n        <paragraph>\n            <problematic ids=\"id6\" refid=\"id5\">\n                *\n            unclosed epilog emphasis\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"psub\">\n        prolog text\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body \n            prolog text\n             and \n            epilog text\n            .\n        <paragraph>\n            <problematic ids=\"id4\" refid=\"id3\">\n                *\n            unclosed body emphasis\n        <paragraph>\n            See \n            <inline classes=\"xref std std-ref\">\n                nolabel\n            .\n        <image candidates=\"{'*': 'missing.png'}\" uri=\"missing.png\">\n        <target dupnames=\"dup\" refid=\"dup\">\n        <paragraph ids=\"dup\">\n            Para.\n        <target dupnames=\"dup\" refid=\"id5\">\n        <paragraph ids=\"id5\">\n            Para2.\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Second\n        <substitution_definition names=\"esub\">\n            epilog text\n        <paragraph>\n            <problematic ids=\"id7\" refid=\"id6\">\n                *\n            unclosed epilog emphasis\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "docinfo": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "docinfo": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"docinfo\">\n                Second\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Title\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'docinfo')\" glob=\"0\" hidden=\"0\" includefiles=\"docinfo\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "docinfo"
+          ]
+        },
+        "warnings": [
+          "<rst_prologue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/docinfo.rst:7: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<rst_epilogue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<rst_prologue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:16: WARNING: Duplicate explicit target name: \"dup\". [docutils]",
+          "<project>/index.rst:20: WARNING: toctree contains reference to nonexisting document 'missing_doc' [toc.not_readable]",
+          "<rst_epilogue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:10: WARNING: image file not readable: missing.png [image.not_readable]",
+          "<project>/index.rst:8: WARNING: undefined label: 'nolabel' [ref.ref]"
+        ]
+      },
+      "files": {
+        "docinfo": ":author: Me\n:date: 2020\n\nSecond\n======\n\n*unclosed after docinfo\n",
+        "index": "Title\n=====\n\nBody |psub| and |esub|.\n\n*unclosed body emphasis\n\nSee :ref:`nolabel`.\n\n.. image:: missing.png\n\n.. _dup:\n\nPara.\n\n.. _dup:\n\nPara2.\n\n.. toctree::\n\n   docinfo\n   missing_doc\n"
+      },
+      "name": "rst_prolog_epilog"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. |a| replace:: A\n.. |b| replace:: B\n.. |c| replace:: C\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "orphan": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"a\">\n        A\n    <substitution_definition names=\"b\">\n        B\n    <substitution_definition names=\"c\">\n        C\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                :external:py:func:`f`\n            .\n",
+          "orphan": "<document source=\"<project>/orphan.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"a\">\n        A\n    <substitution_definition names=\"b\">\n        B\n    <substitution_definition names=\"c\">\n        C\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                :external:py:func:`f`\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "orphan": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                T\n",
+          "orphan": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"orphan\">\n                T\n"
+        },
+        "toctree_includes": {},
+        "warnings": [
+          "<project>/index.rst:8: WARNING: .. hlist content is not a list",
+          "WARNING: unknown role name: external:py:func",
+          "<project>/index.rst:8: ERROR: Unknown interpreted text role \"external:py:func\". [docutils]",
+          "<project>/orphan.rst:11: WARNING: .. hlist content is not a list",
+          "WARNING: unknown role name: external:py:func",
+          "<project>/orphan.rst:10: ERROR: Unknown interpreted text role \"external:py:func\". [docutils]"
+        ]
+      },
+      "files": {
+        "index": "T\n=\n\n.. hlist::\n\n   not a list\n\nSee :external:py:func:`f`.\n",
+        "orphan": ":orphan:\n\nT\n=\n\n.. hlist::\n\n   not a list\n\nSee :external:py:func:`f`.\n"
+      },
+      "name": "rst_prolog_raw_lineno"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: red\n\n.. default-role:: math\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Uses \n            <problematic ids=\"id2\" refid=\"id1\">\n                :red:`r`\n             and \n            <title_reference>\n                a^2\n            .\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Early \n            <inline classes=\"red\">\n                x\n             and \n            <math>\n                a^3\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            To \n            <math>\n                b\n            .\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Uses \n            <inline classes=\"red\">\n                s\n             and \n            <math>\n                b^2\n            .\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Later \n            <inline classes=\"red\">\n                y\n             and \n            <math>\n                b^3\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            For \n            <inline classes=\"red\">\n                you\n             and \n            <math>\n                x^2\n            .\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n        <paragraph>\n            Index \n            <inline classes=\"red\">\n                i\n             and \n            <math>\n                i^2\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:1: ERROR: Unknown interpreted text role \"red\". [docutils]"
+        ]
+      },
+      "files": {
+        "a": ":abstract: Uses :red:`r` and `a^2`.\n\nA\n=\n\nEarly :red:`x` and `a^3`.\n",
+        "b": ":abstract: Uses :red:`s` and `b^2`.\n:dedication: To `b`.\n\nB\n=\n\nLater :red:`y` and `b^3`.\n",
+        "index": ":dedication: For :red:`you` and `x^2`.\n\nIndex\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i` and `i^2`.\n"
+      },
+      "name": "rst_prolog_first_read_fields"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "data_files": {
+        "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+        "readme.md": "# Readme\n\nSome *markdown*.\n"
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n        <paragraph>\n            <inline classes=\"xref std std-doc\">\n                notes\n             \n            <inline classes=\"xref std std-doc\">\n                readme\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": []
+        },
+        "warnings": [
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'notes' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'readme' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'notes.txt' [toc.not_readable]",
+          "<project>/index.rst:10: WARNING: unknown document: 'notes' [ref.doc]",
+          "<project>/index.rst:10: WARNING: unknown document: 'readme' [ref.doc]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n:doc:`notes` :doc:`readme`\n"
+      },
+      "name": "source_suffix_default"
+    },
+    {
+      "conf": {
+        "smartquotes": false,
+        "source_suffix": [
+          ".rst",
+          ".txt"
+        ]
+      },
+      "data_files": {
+        "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+        "readme.md": "# Readme\n\nSome *markdown*.\n"
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "notes": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "notes": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "notes"
+          ],
+          "notes": [
+            "index",
+            "index",
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Notes\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Notes\n        <paragraph>\n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    Notes\n             \n            <inline classes=\"xref std std-doc\">\n                readme\n",
+          "notes": "<document source=\"<project>/notes.txt\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"notes\" names=\"notes\">\n        <title>\n            Notes\n        <paragraph>\n            Plain \n            <emphasis>\n                text\n             file.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "notes": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'notes') (None,\\ 'notes')\" glob=\"0\" hidden=\"0\" includefiles=\"notes notes\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "notes": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"notes\">\n                Notes\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "notes",
+            "notes"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'readme' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: duplicated entry found in toctree: notes [toc.duplicate_entry]",
+          "<project>/index.rst:10: WARNING: unknown document: 'readme' [ref.doc]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n:doc:`notes` :doc:`readme`\n"
+      },
+      "name": "source_suffix_txt"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "data_files": {
+        "f.txt": "f\n",
+        "sub/g.txt": "g\n"
+      },
+      "expect": {
+        "dependencies": {
+          "a": [
+            "<project>/f .txt",
+            "<project>/f.txt",
+            "<project>/missing.txt",
+            "<project>/sub/g.txt"
+          ]
+        },
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f.txt\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"1\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                the file\n    <paragraph>\n        <download_reference filename=\"feae585b0a17a20e9e41978e85bfc62f/g.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"sub/g.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                sub/g.txt\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"/f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                /f.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"missing.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                missing.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refuri=\"https://example.com/x.zip\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 0,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a')\" glob=\"0\" hidden=\"0\" includefiles=\"a\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:9: WARNING: download file not readable: <project>/missing.txt [download.not_readable]",
+          "<project>/a.rst:15: WARNING: download file not readable: <project>/f .txt [download.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to document 'a' that doesn't have a title: no link will be generated [toc.no_title]"
+        ]
+      },
+      "files": {
+        "a": ":download:`f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`sub/g.txt`\n\n:download:`/f.txt`\n\n:download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`f  .txt`\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n"
+      },
+      "name": "roles_download"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "nosec": [
+            "index"
+          ],
+          "sub": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "nosec": [],
+          "sub": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "sub"
+          ],
+          "nosec": [
+            "index",
+            "sub",
+            null
+          ],
+          "sub": [
+            "index",
+            "index",
+            "nosec"
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" title=\"Custom <Page> & Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"real-title\" names=\"real\\ title\">\n        <title>\n            Real Title\n        <paragraph>\n            Body.\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Sub\n",
+          "nosec": "<document source=\"<project>/nosec.rst\" title=\"Only Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Just a paragraph.\n",
+          "sub": "<document source=\"<project>/sub.rst\" title=\"Sub Long Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"sub\" names=\"sub\">\n        <title>\n            Sub\n        <paragraph>\n            Body.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "nosec": 0,
+          "sub": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Real Title\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'sub') (None,\\ 'nosec')\" glob=\"0\" hidden=\"0\" includefiles=\"sub nosec\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "nosec": "<bullet_list>\n",
+          "sub": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"sub\">\n                Sub\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "sub",
+            "nosec"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:8: WARNING: toctree contains reference to document 'nosec' that doesn't have a title: no link will be generated [toc.no_title]"
+        ]
+      },
+      "files": {
+        "index": ".. title:: Custom <Page> & Title\n\nReal Title\n==========\n\nBody.\n\n.. toctree::\n\n   sub\n   nosec\n",
+        "nosec": ".. title:: Only Title\n\nJust a paragraph.\n",
+        "sub": ".. title:: Sub Long Title\n\nSub\n===\n\nBody.\n"
+      },
+      "name": "title_directive"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "sub": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "sub": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "sub"
+          ],
+          "sub": [
+            "index",
+            "index",
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"root\" names=\"root\">\n        <title>\n            Root\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\" secnumber=\"1\">\n                                <generated classes=\"sectnum\">\n                                    1   \n                                Title\n                        <bullet_list>\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-a\" internal=\"1\" refuri=\"#section-a\" secnumber=\"1 1\">\n                                        <generated classes=\"sectnum\">\n                                            1.1   \n                                        Section A\n                                <bullet_list>\n                                    <list_item classes=\"toctree-l3\">\n                                        <compact_paragraph classes=\"toctree-l3\">\n                                            <reference anchorname=\"#sub-a1\" internal=\"1\" refuri=\"#sub-a1\" secnumber=\"1 1 1\">\n                                                <generated classes=\"sectnum\">\n                                                    1.1.1   \n                                                Sub A1\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-b\" internal=\"1\" refuri=\"#section-b\" secnumber=\"1 2\">\n                                        <generated classes=\"sectnum\">\n                                            1.2   \n                                        Section B\n",
+          "sub": "<document source=\"<project>/sub.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title auto=\"1\">\n                    <generated classes=\"sectnum\">\n                        1.1.1   \n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                Section B\n            <paragraph>\n                Text B.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "sub": 4
+        },
+        "toc_secnumbers": {
+          "sub": {
+            "": [
+              1
+            ],
+            "#section-a": [
+              1,
+              1
+            ],
+            "#section-b": [
+              1,
+              2
+            ],
+            "#sub-a1": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Root\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'sub')\" glob=\"0\" hidden=\"0\" includefiles=\"sub\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"999\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "sub": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"sub\" secnumber=\"1\">\n                <generated classes=\"sectnum\">\n                    1   \n                Title\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-a\" internal=\"1\" refuri=\"sub\" secnumber=\"1 1\">\n                        <generated classes=\"sectnum\">\n                            1.1   \n                        Section A\n                <bullet_list>\n                    <list_item>\n                        <compact_paragraph>\n                            <reference anchorname=\"#sub-a1\" internal=\"1\" refuri=\"sub\" secnumber=\"1 1 1\">\n                                <generated classes=\"sectnum\">\n                                    1.1.1   \n                                Sub A1\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-b\" internal=\"1\" refuri=\"sub\" secnumber=\"1 2\">\n                        <generated classes=\"sectnum\">\n                            1.2   \n                        Section B\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "sub"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "index": "Root\n====\n\n.. toctree::\n   :numbered:\n\n   sub\n",
+        "sub": "Title\n=====\n\n.. sectnum::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+      },
+      "name": "sectnum_numbered_toctree"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "sub": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "sub": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "sub"
+          ],
+          "sub": [
+            "index",
+            "index",
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"root\" names=\"root\">\n        <title>\n            Root\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Title\n                        <bullet_list>\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-a\" internal=\"1\" refuri=\"#section-a\">\n                                        Section A\n                                <bullet_list>\n                                    <list_item classes=\"toctree-l3\">\n                                        <compact_paragraph classes=\"toctree-l3\">\n                                            <reference anchorname=\"#sub-a1\" internal=\"1\" refuri=\"#sub-a1\">\n                                                Sub A1\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-b\" internal=\"1\" refuri=\"#section-b\">\n                                        Section B\n",
+          "sub": "<document source=\"<project>/sub.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"section-a\">\n                            Section A\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id2\" refid=\"section-b\">\n                            Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id1\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id2\">\n                Section B\n            <paragraph>\n                Text B.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "sub": 4
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Root\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'sub')\" glob=\"0\" hidden=\"0\" includefiles=\"sub\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "sub": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"sub\">\n                Title\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-a\" internal=\"1\" refuri=\"sub\">\n                        Section A\n                <bullet_list>\n                    <list_item>\n                        <compact_paragraph>\n                            <reference anchorname=\"#sub-a1\" internal=\"1\" refuri=\"sub\">\n                                Sub A1\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-b\" internal=\"1\" refuri=\"sub\">\n                        Section B\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "sub"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "index": "Root\n====\n\n.. toctree::\n\n   sub\n",
+        "sub": "Title\n=====\n\n.. contents::\n   :local:\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+      },
+      "name": "contents_in_subdoc"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"about-missing-label\">\n                                    About \n                                    <inline classes=\"xref std std-ref\">\n                                        missing-label\n        <section ids=\"about-missing-label\" names=\"about\\ missing-label\">\n            <title refid=\"id2\">\n                About \n                <inline classes=\"xref std std-ref\">\n                    missing-label\n            <paragraph>\n                x\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 2
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Title\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#about-missing-label\" internal=\"1\" refuri=\"index\">\n                        About \n                        <inline classes=\"xref std std-ref\">\n                            missing-label\n"
+        },
+        "toctree_includes": {},
+        "warnings": [
+          "<project>/index.rst:6: WARNING: undefined label: 'missing-label' [ref.ref]",
+          "<project>/index.rst:6: WARNING: undefined label: 'missing-label' [ref.ref]"
+        ]
+      },
+      "files": {
+        "index": "Title\n=====\n\n.. contents::\n\nAbout :ref:`missing-label`\n--------------------------\n\nx\n"
+      },
+      "name": "contents_unresolved_xref"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <productionlist>\n            <production tokenname=\"stmt\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-lang-stmt\">\n                    stmt\n                   ::= \n                <literal classes=\"xref\">\n                    expr\n                 \";\"\n                \n            <production tokenname=\"factor\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-lang-factor\">\n                    factor\n                 ::= \n                \"x\"\n                \n            <production tokenname=\"\" xml:space=\"preserve\">\n                           \n                <reference internal=\"1\" refuri=\"#grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                \n        <paragraph>\n            See \n            <literal classes=\"xref std std-token\">\n                stmt\n             and \n            <reference internal=\"1\" refid=\"grammar-token-lang-factor\">\n                <literal classes=\"xref std std-token\">\n                    lang:factor\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <productionlist>\n            <production tokenname=\"term\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-term\">\n                    term\n                 ::= \n                \"dup\"\n                \n        <paragraph>\n            See \n            <reference internal=\"1\" refuri=\"#grammar-token-term\">\n                <literal classes=\"xref std std-token\">\n                    term\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"grammar\" names=\"grammar\">\n        <title>\n            Grammar\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n        <productionlist>\n            <production tokenname=\"expr\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-expr\">\n                    expr\n                 ::= \n                <reference internal=\"1\" refid=\"grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                 (\"+\" \n                <reference internal=\"1\" refid=\"grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                )*\n                \n            <production tokenname=\"term\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-term\">\n                    term\n                 ::= \n                <literal classes=\"xref\">\n                    factor\n                 | \n                <reference internal=\"1\" refuri=\"#grammar-token-lang-stmt\">\n                    <literal classes=\"xref\">\n                        lang:stmt\n                \n        <paragraph>\n            See \n            <reference internal=\"1\" refid=\"grammar-token-expr\">\n                <literal classes=\"xref std std-token\">\n                    expr\n            , \n            <reference internal=\"1\" refuri=\"#grammar-token-lang-stmt\">\n                <literal classes=\"xref std std-token\">\n                    lang:stmt\n            , \n            <literal classes=\"xref std std-token\">\n                missing\n             and \n            <reference internal=\"1\" refid=\"grammar-token-term\">\n                <literal classes=\"xref std std-token\">\n                    the term\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "index",
+              "labelid": "grammar-token-expr",
+              "name": "expr",
+              "objtype": "token"
+            },
+            {
+              "docname": "a",
+              "labelid": "grammar-token-lang-factor",
+              "name": "lang:factor",
+              "objtype": "token"
+            },
+            {
+              "docname": "a",
+              "labelid": "grammar-token-lang-stmt",
+              "name": "lang:stmt",
+              "objtype": "token"
+            },
+            {
+              "docname": "index",
+              "labelid": "grammar-token-term",
+              "name": "term",
+              "objtype": "token"
+            }
+          ],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Grammar\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:9: WARNING: duplicate token description of term, other instance in b"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n.. productionlist:: lang\n   stmt: `expr` \";\"\n   factor: \"x\"\n       : `:term`\n\nSee :token:`stmt` and :token:`lang:factor`.\n",
+        "b": "B\n=\n\n.. productionlist::\n   term: \"dup\"\n\nSee :token:`term`.\n",
+        "index": "Grammar\n=======\n\n.. toctree::\n\n   a\n   b\n\n.. productionlist::\n   expr: `term` (\"+\" `term`)*\n   term: `factor` | `lang:stmt`\n\nSee :token:`expr`, :token:`lang:stmt`, :token:`missing` and :token:`the term <term>`.\n"
+      },
+      "name": "productionlist_tokens"
     }
   ],
   "sphinx_version": "9.1.0"

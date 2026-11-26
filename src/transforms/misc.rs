@@ -10,6 +10,7 @@ use crate::doctree::ids::{fully_normalize_name, make_id};
 use crate::doctree::messages::{self, ERROR, WARNING};
 use crate::doctree::pending::PyValue;
 use crate::doctree::{kinds, AttrValue, Node, Span};
+use crate::rst::{LogLocation, SphinxCrash};
 
 /// 210 `ClassAttribute` (`SP/docutils/transforms/misc.py:37-62`), the
 /// transform a `.. rst-class::` (or, in docutils mode, `.. class::`)
@@ -188,6 +189,9 @@ impl Transform for DocInfo {
         let field_list = children[index];
         location::freeze_workaround(cx.tree, field_list, cx.state);
         let nodelist = extract_bibliographic(cx, field_list);
+        if cx.crashed() {
+            return;
+        }
         cx.tree.remove(root, field_list);
         for (offset, node) in nodelist.into_iter().enumerate() {
             cx.tree.insert(root, biblioindex + offset, node);
@@ -242,6 +246,9 @@ fn extract_bibliographic(cx: &mut TransformCx<'_>, field_list: TxId) -> Vec<TxId
             .unwrap_or_default();
         let normed = fully_normalize_name(&name);
         let read = bibliographic_field(cx, field, &name, &normed, docinfo, &mut topics);
+        if cx.crashed() {
+            return Vec::new();
+        }
         if read.is_err() {
             if let Some(body) = cx.tree.node(field).children.last().copied() {
                 let body_children = &cx.tree.node(body).children;
@@ -359,7 +366,9 @@ fn is_paragraph(kind: &str) -> bool {
 /// enumerated list and whose text is one line passes too once parsed again
 /// after a backslash ([`reparse_initial`]), into one paragraph: docutils
 /// read an author's leading initial (`J. Smith`) as an enumerator. Any
-/// other body warns, naming what it holds but its messages.
+/// other body warns, naming what it holds but its messages; one that holds
+/// messages alone crashes Sphinx 9.1.0 there (`content[0]` of an empty
+/// list, `IndexError`), at the field (decision 13).
 fn check_compound_biblio_field(
     cx: &mut TransformCx<'_>,
     field: TxId,
@@ -399,10 +408,16 @@ fn check_compound_biblio_field(
         .filter(|&kind| kind != kinds::SYSTEM_MESSAGE)
         .map(|kind| format!("<{kind}>"))
         .collect();
-    // A body holding messages alone crashes Sphinx 9.1.0 here
-    // (`content[0]` of an empty list): not modelled (decision 13), it
-    // reads as an empty list.
     let content = match content.as_slice() {
+        [] => {
+            let crash = SphinxCrash::python(
+                "IndexError",
+                "list index out of range".to_string(),
+                LogLocation::None,
+            );
+            cx.crash(crash, field);
+            return Err(KeepField);
+        }
         [one] => format!("a {one}"),
         many => format!("[{}]", many.join(", ")),
     };

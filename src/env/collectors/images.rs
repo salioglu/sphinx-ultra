@@ -21,10 +21,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::{in_srcdir, is_readable};
 use crate::diagnostics::Category;
 use crate::doctree::{kinds, AttrValue};
 use crate::env::BuildEnvironment;
@@ -213,20 +214,6 @@ fn set_candidates(cx: &mut TransformCx<'_>, image: TxId, candidates: &[(String, 
         "candidates",
         AttrValue::Str(format!("{{{}}}", entries.join(", "))),
     );
-}
-
-/// `srcdir / path`: a path relative to the source directory, with `/` as
-/// its separator, joined onto it one component at a time.
-fn in_srcdir(srcdir: &Path, path: &str) -> PathBuf {
-    let mut file = srcdir.to_path_buf();
-    file.extend(path.split('/').filter(|part| !part.is_empty()));
-    file
-}
-
-/// `os.access(path, os.R_OK)`, as far as the build can tell: whether it
-/// can open the file, or list the directory, at `path`.
-fn is_readable(path: &Path) -> bool {
-    std::fs::File::open(path).is_ok() || std::fs::read_dir(path).is_ok()
 }
 
 /// `get_image_filename_for_language(filename, env)`

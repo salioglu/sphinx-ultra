@@ -21,7 +21,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::pending::PendingTransform;
 use super::{AttrValue, Node, Uid};
 use crate::transforms::reporter::LogRecord;
-use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord};
+use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord, SourceRef};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -499,18 +499,50 @@ impl DocumentState {
     }
 
     /// `set_id` plus `set_name_id_map`, applying each reported duplicate
-    /// the way `set_duplicate_name_id` does: the node in hand loses the
-    /// name at once, an earlier node (already placed in the parser's tree)
-    /// through a [`DupnameFixup`], and the message is reported here.
+    /// the way `set_duplicate_name_id` does: its `dupname`s, of the node in
+    /// hand first and then of the earlier node, each removing one
+    /// occurrence of the name from that node's `names`, then its message.
+    /// The node in hand loses the name at once, an earlier node (already
+    /// placed in the parser's tree) through a [`DupnameFixup`].
+    ///
+    /// The earlier node is the node in hand when it binds a name already
+    /// bound to it: a figure whose `:figname:` registered the name before
+    /// Sphinx's `Figure` registers its names again for `:name:`. It then
+    /// loses the name at once for each `dupname`, and when it no longer
+    /// carries the name, `names.remove(name)` raises `ValueError` before
+    /// the duplicate's message is made: Sphinx 9.1.0 crashes there
+    /// (decision 13), at `loc`, after the messages of the duplicates before
+    /// it, and binds nothing more. So `:figname: my fig` with `:name:
+    /// other` crashes on `my fig`, which the figure carries once and loses
+    /// as the new node, while `:figname: x` with `:name: x`, carrying `x`
+    /// twice, reports the first `x`'s duplicate and crashes on the second.
     fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
         let id = self.set_id_at(node, loc);
         let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
         let mut reported = Vec::with_capacity(duplicates.len());
         for duplicate in duplicates {
-            if duplicate.dupname_new {
-                dupname(node, &duplicate.name);
+            let own_old = duplicate
+                .dupname_old
+                .as_ref()
+                .is_some_and(|old_id| node.attrs.ids.contains(old_id));
+            let removals = usize::from(duplicate.dupname_new) + usize::from(own_old);
+            if !(0..removals).all(|_| dupname(node, &duplicate.name)) {
+                let location = match loc {
+                    DocLoc {
+                        source: Some(SourceRef::Table(source)),
+                        line: Some(line),
+                    } => crate::rst::LogLocation::Node { source, line },
+                    _ => crate::rst::LogLocation::None,
+                };
+                let crash = crate::rst::SphinxCrash::python(
+                    "ValueError",
+                    "list.remove(x): x not in list".to_string(),
+                    location,
+                );
+                self.raise(crash, 0, 0);
+                break;
             }
-            if let Some(node_id) = duplicate.dupname_old {
+            if let Some(node_id) = duplicate.dupname_old.filter(|_| !own_old) {
                 self.parse.dupname_fixups.push(DupnameFixup {
                     name: duplicate.name.clone(),
                     node_id,
@@ -551,21 +583,31 @@ impl DocumentState {
     /// sphinx `util.nodes.make_id(env, document, prefix, term)` (`:610-637`),
     /// both prefix regimes:
     ///
-    /// - non-empty prefix: candidate `_make_id(f'{prefix}-{term}')`, rejected
-    ///   when it collapses to just the prefix, then serial fallback
-    ///   `f'{prefix}-{env.new_serialno(prefix)}'` until the id is free;
+    /// - non-empty prefix: `idformat = prefix + '-%s'`, which Python's `%`
+    ///   formats ([`id_format`]): candidate `_make_id(idformat % term)`,
+    ///   rejected when it collapses to just the prefix, then serial fallback
+    ///   `idformat % env.new_serialno(prefix)` until the id is free, the
+    ///   counter keyed by the prefix as written. A doubled `%` in the prefix
+    ///   formats as one `%`, which `_make_id` makes a hyphen of in the
+    ///   candidate and the fallback keeps (the group `p%%q` falls back to
+    ///   `grammar-token-p%q-0`); any other `%` raises, the `Err`, which the
+    ///   caller raises as the crash it is in Sphinx 9.1.0 (decision 13);
     /// - EMPTY prefix (the py domain's object ids, `domains/python/
     ///   _object.py:420`): `idformat` becomes `(id_prefix or 'id') + '%s'`
     ///   with the Sphinx-pinned `id_prefix=''`, so the candidate is the bare
     ///   `_make_id(term)` — dots, underscores and capitals survive, making
     ///   `mymod.C.meth` its own node id — rejected when empty, and the
     ///   serial fallback is `id{n}` (`id0`, `id1`, …) with the counter still
-    ///   keyed by the empty prefix.
+    ///   keyed by the empty prefix. Nothing to raise.
     ///
     /// Sphinx does NOT register the result in `document.ids` here —
     /// `note_explicit_target` → `document.set_id` does, which is
     /// [`IdAllocator::register`](crate::transforms::state::IdAllocator::register).
-    pub(crate) fn sphinx_make_id(&mut self, prefix: &str, term: &str) -> String {
+    pub(crate) fn sphinx_make_id(
+        &mut self,
+        prefix: &str,
+        term: &str,
+    ) -> Result<String, crate::rst::SphinxCrash> {
         let mut node_id = if term.is_empty() {
             None
         } else if prefix.is_empty() {
@@ -573,33 +615,69 @@ impl DocumentState {
             // `if not node_id: node_id = None` — empty term hash.
             (!candidate.is_empty()).then_some(candidate)
         } else {
-            let candidate = sphinx_make_id(&format!("{prefix}-{term}"));
+            let candidate = sphinx_make_id(&id_format(prefix, term)?);
             // "*term* is not good to generate a node_id."
             (candidate != prefix).then_some(candidate)
         };
         loop {
             match &node_id {
-                Some(id) if !self.ids.is_taken(id) => return id.clone(),
+                Some(id) if !self.ids.is_taken(id) => return Ok(id.clone()),
                 _ => {}
             }
             let serial = self.new_serialno(prefix);
             node_id = Some(if prefix.is_empty() {
                 format!("id{serial}")
             } else {
-                format!("{prefix}-{serial}")
+                id_format(prefix, &serial.to_string())?
             });
         }
     }
 }
 
-/// docutils `dupname(node, name)`: the name moves from `names` to
-/// `dupnames`. A name the node does not carry stays put (docutils
-/// raises).
-fn dupname(node: &mut Node, name: &str) {
-    if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
-        node.attrs.names.remove(pos);
-        node.attrs.dupnames.push(name.to_string());
+/// Sphinx's `make_id` formatting `idformat = prefix + '-%s'` for a
+/// non-empty prefix (`SP/sphinx/util/nodes.py:619`), `idformat % arg`:
+/// Python's `%` with one `str` ([`crate::pyformat::percent`]). When every
+/// `%` of the prefix is doubled, the trailing `%s` is the one conversion
+/// and each `%%` makes one `%`. Any other `%` starts a conversion, which
+/// raises or takes the argument the trailing `%s` then lacks: the
+/// exception, unlocated, which the caller locates and raises.
+///
+/// Python formats the fallback's serial as an `int`, the port as its
+/// `str()`: the same id under every prefix that has formatted a term,
+/// each `%` of it doubled. Only an empty term reaches the fallback with no
+/// term formatted first, and under a prefix with an undoubled `%` both
+/// raise, though not always alike: for a conversion that takes an `int`
+/// and refuses the serial's `str()` (`%d`, `%*s`, `%c` from serial 10
+/// on), Python goes on to the trailing `%s` and raises `not enough
+/// arguments for format string`. No Sphinx caller gets there: a
+/// production's name is never empty, and an option's spelling is empty
+/// only after its signature's first, which Sphinx requires (`if not
+/// firstname: raise ValueError`) and which formats the same program
+/// first. Ultra's option signature, which keeps an empty first spelling,
+/// does.
+fn id_format(prefix: &str, arg: &str) -> Result<String, crate::rst::SphinxCrash> {
+    use crate::pyformat::{percent, FormatError};
+    match percent(&format!("{prefix}-%s"), arg) {
+        Ok(id) => Ok(id),
+        Err(FormatError::TypeError(crash) | FormatError::Crash(crash)) => Err(crash),
+        // `%` looks no key up and reads no attribute.
+        Err(FormatError::KeyError(_) | FormatError::NotModelled(_)) => {
+            unreachable!("`%` raises neither")
+        }
     }
+}
+
+/// docutils `dupname(node, name)`: the first occurrence of the name in
+/// `names` moves to `dupnames`. `false`, and nothing moves, when the node
+/// does not carry the name, where docutils' `names.remove(name)` raises
+/// `ValueError`, which crashes the build ([`DocumentState::note_target`]).
+fn dupname(node: &mut Node, name: &str) -> bool {
+    let Some(pos) = node.attrs.names.iter().position(|n| n == name) else {
+        return false;
+    };
+    node.attrs.names.remove(pos);
+    node.attrs.dupnames.push(name.to_string());
+    true
 }
 
 /// The first node in pre-order under `node` that carries `id` and is not
@@ -698,18 +776,27 @@ mod tests {
     #[test]
     fn state_sphinx_make_id_falls_back_to_a_per_prefix_serial() {
         let mut state = DocumentState::default();
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        assert_eq!(
+            state.sphinx_make_id("envvar", "HOME").unwrap(),
+            "envvar-HOME"
+        );
         // Not registered until `IdAllocator::register`, so the same call
         // repeats.
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        assert_eq!(
+            state.sphinx_make_id("envvar", "HOME").unwrap(),
+            "envvar-HOME"
+        );
         state.ids.register("envvar-HOME", None);
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-0");
+        assert_eq!(state.sphinx_make_id("envvar", "HOME").unwrap(), "envvar-0");
         state.ids.register("envvar-0", None);
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-1");
+        assert_eq!(state.sphinx_make_id("envvar", "HOME").unwrap(), "envvar-1");
         // A term that collapses to the prefix itself is "not good to
         // generate a node_id" and goes straight to the serial; the counter
         // is per prefix.
-        assert_eq!(state.sphinx_make_id("cmdoption", "!!!"), "cmdoption-0");
+        assert_eq!(
+            state.sphinx_make_id("cmdoption", "!!!").unwrap(),
+            "cmdoption-0"
+        );
     }
 
     /// The empty-prefix regime the py domain's `make_id(env, doc, '',
@@ -720,18 +807,103 @@ mod tests {
     #[test]
     fn state_sphinx_make_id_empty_prefix_keeps_fullname_and_serials_as_id_n() {
         let mut state = DocumentState::default();
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "mymod.C.meth");
+        assert_eq!(
+            state.sphinx_make_id("", "mymod.C.meth").unwrap(),
+            "mymod.C.meth"
+        );
         state.ids.register("mymod.C.meth", None);
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id0");
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth").unwrap(), "id0");
         state.ids.register("id0", None);
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id1");
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth").unwrap(), "id1");
         // A term whose hash is empty goes straight to the serial; the
         // counter is shared per prefix ('' here), not per term.
         state.ids.register("id1", None);
-        assert_eq!(state.sphinx_make_id("", "!!!"), "id2");
+        assert_eq!(state.sphinx_make_id("", "!!!").unwrap(), "id2");
         // Empty term likewise.
         state.ids.register("id2", None);
-        assert_eq!(state.sphinx_make_id("", ""), "id3");
+        assert_eq!(state.sphinx_make_id("", "").unwrap(), "id3");
+    }
+
+    /// Sphinx's `make_id` formats `prefix + '-%s'` with Python's `%`
+    /// (`SP/sphinx/util/nodes.py:619-635`), with the term for the candidate
+    /// and with the serial for the fallback: a doubled `%` in the prefix is
+    /// one `%`, which the candidate's `_make_id` makes a hyphen of and the
+    /// fallback keeps, the serial counted under the prefix as written; a
+    /// `%` in the term is data; any other `%` in the prefix raises what
+    /// Python raises.
+    //
+    // oracle: `sphinx.util.nodes.make_id` of Sphinx 9.1.0 on CPython 3.12.2
+    //   over a stub environment and document, each id registered
+    //   (scratchpad/t18c/fix1/makeid.py).
+    #[test]
+    fn state_sphinx_make_id_formats_its_prefix_with_python_percent() {
+        let mut state = DocumentState::default();
+        for (prefix, term, id) in [
+            ("grammar-token-p%%q", "a", "grammar-token-p-q-a"),
+            ("grammar-token-p%%q", "a", "grammar-token-p%q-0"),
+            ("grammar-token-p%%q", "a", "grammar-token-p%q-1"),
+            ("cmdoption-p%%q-arg", "x", "cmdoption-p-q-arg-x"),
+            ("cmdoption-p%%q-arg", "x", "cmdoption-p%q-arg-0"),
+            ("cmdoption-p%%q-arg", "", "cmdoption-p%q-arg-1"),
+            ("grammar-token-g", "a%b", "grammar-token-g-a-b"),
+            ("grammar-token-g", "a%%b", "grammar-token-g-0"),
+        ] {
+            let made = state.sphinx_make_id(prefix, term).unwrap();
+            assert_eq!(made, id, "{prefix:?} {term:?}");
+            state.ids.register(&made, None);
+        }
+        let not_enough = "TypeError: not enough arguments for format string";
+        for (prefix, term, raised) in [
+            (
+                "grammar-token-100%",
+                "a",
+                "ValueError: unsupported format character '%' (0x25) at index 19",
+            ),
+            (
+                "grammar-token-a%b",
+                "a",
+                "ValueError: unsupported format character 'b' (0x62) at index 16",
+            ),
+            ("grammar-token-x%sy", "a", not_enough),
+            (
+                "cmdoption-50%",
+                "-a",
+                "ValueError: unsupported format character '%' (0x25) at index 14",
+            ),
+            ("cmdoption-p%-arg", "x", not_enough),
+            (
+                "grammar-token-%d",
+                "a",
+                "TypeError: %d format: a real number is required, not str",
+            ),
+            (
+                "grammar-token-%(x)s",
+                "a",
+                "TypeError: format requires a mapping",
+            ),
+            ("grammar-token-%*d", "a", "TypeError: * wants int"),
+            ("grammar-token-%c", "a", not_enough),
+            (
+                "grammar-token-%c",
+                "ab",
+                "TypeError: %c requires int or char",
+            ),
+            (
+                "grammar-token-\u{e9}%\u{fc}",
+                "a",
+                "ValueError: unsupported format character '?' (0xfc) at index 16",
+            ),
+            // An empty term formats only the serial, an `int` in Python and
+            // its `str()` here ([`id_format`]): these raise as Python does,
+            // where under `cmdoption-%d-arg` or `cmdoption-%*d` Python
+            // raises `not enough arguments` and the port what a `str` gets.
+            ("cmdoption-50%-arg", "", not_enough),
+            ("cmdoption-%s-arg", "", not_enough),
+            ("cmdoption-%c", "", not_enough),
+        ] {
+            let crash = state.sphinx_make_id(prefix, term).unwrap_err();
+            assert_eq!(crash.to_string(), raised, "{prefix:?} {term:?}");
+        }
     }
 
     /// A `Duplicate ID` record no node completes, its holder in no tree, no
@@ -886,6 +1058,97 @@ mod tests {
             panic!("one WARNING, got {reported:?}");
         };
         assert_eq!(msg.attrs.backrefs, vec!["id1"]); // internal: backrefs
+    }
+
+    /// docutils `dupname(node, name)` removes one occurrence of the name
+    /// per call (`names.remove`) and raises `ValueError` once the node no
+    /// longer carries it (`nodes.py:3036-3038`); `set_duplicate_name_id`
+    /// makes its message after its `dupname`s (`nodes.py:1929-1990`). A
+    /// node bound again, its names now holding a name twice or one it was
+    /// bound by before, is the old node of its own duplicates, and loses
+    /// the name at once, once per `dupname`, with no fixup: the first
+    /// `dupname` that finds the name gone raises, and Sphinx 9.1.0 crashes
+    /// there (decision 13), after the messages of the duplicates before
+    /// it.
+    //
+    // oracle (docutils 0.22.4, the locked core profile): a `figure` with
+    //   each `names` bound by `document.note_*_target(node, node)` in turn,
+    //   the reporter's messages observed: `Duplicate explicit target name:
+    //   "x".` (WARNING) then `ValueError`; `ValueError` alone; `Target name
+    //   overrides implicit target name "x".` (INFO) then `ValueError`;
+    //   that INFO, `names=['y']`, `dupnames=['x']`; that WARNING,
+    //   `names=[]`, `dupnames=['x', 'x']`; that WARNING twice, then
+    //   `ValueError`.
+    #[test]
+    fn a_node_bound_again_loses_one_occurrence_per_duplicate() {
+        let bind = |steps: &[(bool, &[&str])]| {
+            let mut state = DocumentState::default();
+            let mut figure = Node::elem("figure", Span::ZERO);
+            let mut messages = Vec::new();
+            for (explicit, names) in steps {
+                figure
+                    .attrs
+                    .names
+                    .extend(names.iter().map(|name| name.to_string()));
+                let reported = if *explicit {
+                    state.note_explicit_target(&mut figure, DocLoc::at(0, 1))
+                } else {
+                    state.note_implicit_target(&mut figure, DocLoc::at(0, 1))
+                };
+                messages.extend(reported.iter().map(|message| {
+                    let Some(AttrValue::Str(level)) = message.get("type") else {
+                        panic!("a message has a type");
+                    };
+                    format!("{level}: {}", message.element_astext())
+                }));
+            }
+            assert!(
+                state.parse.dupname_fixups.is_empty(),
+                "the old node is the node in hand"
+            );
+            let crash = state.crash.map(|crash| crash.to_string());
+            (messages, crash, figure.attrs.names, figure.attrs.dupnames)
+        };
+        let crash = Some("ValueError: list.remove(x): x not in list".to_string());
+        let (messages, raised, ..) = bind(&[(true, &["x"]), (true, &["x"])]);
+        assert_eq!(
+            (messages, raised),
+            (
+                vec!["WARNING: Duplicate explicit target name: \"x\".".to_string()],
+                crash.clone()
+            )
+        );
+        let (messages, raised, ..) = bind(&[(true, &["my fig"]), (true, &["other"])]);
+        assert_eq!((messages, raised), (Vec::new(), crash.clone()));
+        let overrides = "INFO: Target name overrides implicit target name \"x\".".to_string();
+        let (messages, raised, ..) = bind(&[(false, &["x"]), (true, &["x"])]);
+        assert_eq!((messages, raised), (vec![overrides.clone()], crash.clone()));
+        assert_eq!(
+            bind(&[(false, &["x"]), (true, &["y"])]),
+            (
+                vec![overrides],
+                None,
+                vec!["y".to_string()],
+                vec!["x".to_string()]
+            )
+        );
+        // A node first bound with a name twice is the old node of its own
+        // second occurrence, and loses both.
+        let duplicate = "WARNING: Duplicate explicit target name: \"x\".".to_string();
+        assert_eq!(
+            bind(&[(true, &["x", "x"])]),
+            (
+                vec![duplicate.clone()],
+                None,
+                Vec::new(),
+                vec!["x".to_string(), "x".to_string()]
+            )
+        );
+        let (messages, raised, ..) = bind(&[(true, &["x"]), (true, &["x", "x"])]);
+        assert_eq!(
+            (messages, raised),
+            (vec![duplicate.clone(), duplicate], crash)
+        );
     }
 
     /// docutils `set_id` on a node that already carries ids registers

@@ -19,8 +19,12 @@
 //!
 //! Both read through [`read_standalone`] with the [`ReadSettings`] the
 //! fixture's recorded settings give through a [`BuildConfig`] (M1's
-//! directive and role validation off, wave 5a decision 7), never Sphinx's
-//! bare defaults, and compare its post-read doctree as it is.
+//! directive and role validation off, wave 5a decision 7) for the dummy
+//! builder the oracle builds with, never Sphinx's bare defaults, and
+//! compare its post-read doctree as it is. Both corpora read with smart
+//! quotes off: the fixture's header says so, and so does the oracle's
+//! `conf.py`; tests/sphinx_smartquotes_differential.rs reads the first
+//! corpus with them on.
 //!
 //! Clones the tests/doctree_differential.rs shape: committed JSON, version
 //! assertions (BOTH sphinx and docutils are recorded), floor guard against
@@ -31,12 +35,14 @@
 //!
 //! Per-case config (wave-4.5 task 8): a case may carry a `conf` dict — the
 //! confoverrides the generator applied for that case. Every key maps onto
-//! `ParseOptions.py` ([`sphinx_ultra::py::PySigConfig`]); an unmapped key is
-//! a hard error so a future generator-side conf addition fails HERE instead
-//! of silently parsing under defaults (serde ignores unknown struct fields,
-//! so without the explicit map a conf case would quietly lose its config).
+//! the parse options through tests/support/fixture_conf.rs, which the
+//! smart-quotes variant consumer shares; an unmapped key is a hard error so
+//! a future generator-side conf addition fails HERE instead of silently
+//! parsing under defaults (serde ignores unknown struct fields, so without
+//! the explicit map a conf case would quietly lose its config).
 
 mod support {
+    pub mod fixture_conf;
     pub mod read_gaps;
     pub mod text_diff;
 }
@@ -74,69 +80,6 @@ struct Case {
     conf: BTreeMap<String, serde_json::Value>,
 }
 
-/// Map a fixture case's `conf` dict onto the [`PySigConfig`] the parse layer
-/// consumes. Errors on any key (or value shape) it does not understand.
-fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PySigConfig, String> {
-    use serde_json::Value;
-
-    fn opt_i64(key: &str, value: &Value) -> Result<Option<i64>, String> {
-        match value {
-            Value::Null => Ok(None),
-            Value::Number(n) => n
-                .as_i64()
-                .map(Some)
-                .ok_or_else(|| format!("conf key {key}: non-integer number {n}")),
-            other => Err(format!("conf key {key}: expected integer, got {other}")),
-        }
-    }
-    fn boolean(key: &str, value: &Value) -> Result<bool, String> {
-        value
-            .as_bool()
-            .ok_or_else(|| format!("conf key {key}: expected bool, got {value}"))
-    }
-    fn string(key: &str, value: &Value) -> Result<String, String> {
-        value
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))
-    }
-
-    let mut py = PySigConfig::default();
-    for (key, value) in conf {
-        match key.as_str() {
-            "maximum_signature_line_length" => {
-                py.maximum_signature_line_length = opt_i64(key, value)?;
-            }
-            "python_maximum_signature_line_length" => {
-                py.python_maximum_signature_line_length = opt_i64(key, value)?;
-            }
-            "python_trailing_comma_in_multi_line_signatures" => {
-                py.python_trailing_comma_in_multi_line_signatures = boolean(key, value)?;
-            }
-            "python_display_short_literal_types" => {
-                py.python_display_short_literal_types = boolean(key, value)?;
-            }
-            "python_use_unqualified_type_names" => {
-                py.python_use_unqualified_type_names = boolean(key, value)?;
-            }
-            "toc_object_entries" => py.toc_object_entries = boolean(key, value)?,
-            "toc_object_entries_show_parents" => {
-                py.toc_object_entries_show_parents = string(key, value)?;
-            }
-            "add_function_parentheses" => py.add_function_parentheses = boolean(key, value)?,
-            "add_module_names" => py.add_module_names = boolean(key, value)?,
-            "strip_signature_backslash" => py.strip_signature_backslash = boolean(key, value)?,
-            other => {
-                return Err(format!(
-                    "unmapped conf key {other:?}: teach py_config_from_conf about it \
-                     (and the parse layer, if it is not a PySigConfig knob)"
-                ));
-            }
-        }
-    }
-    Ok(py)
-}
-
 #[test]
 fn an_unmapped_conf_key_fails() {
     let mut conf = BTreeMap::new();
@@ -144,36 +87,49 @@ fn an_unmapped_conf_key_fails() {
         "python_no_such_setting".to_string(),
         serde_json::Value::Bool(true),
     );
-    let err = py_config_from_conf(&conf).unwrap_err();
+    let err = support::fixture_conf::snippet_parse_options(&conf).unwrap_err();
     assert!(
         err.contains("unmapped conf key \"python_no_such_setting\""),
         "unexpected error text: {err}"
     );
 
-    // A mapped key with the wrong value shape fails too.
-    let mut conf = BTreeMap::new();
-    conf.insert(
-        "add_function_parentheses".to_string(),
-        serde_json::Value::String("yes".to_string()),
-    );
-    assert!(py_config_from_conf(&conf).is_err());
+    // A mapped key with the wrong value shape fails too, a non-integer line
+    // length included.
+    for (key, value) in [
+        ("add_function_parentheses", serde_json::json!("yes")),
+        ("maximum_signature_line_length", serde_json::json!(8.5)),
+        ("default_role", serde_json::json!(1)),
+        ("rst_prolog", serde_json::json!(["x"])),
+    ] {
+        let conf = BTreeMap::from([(key.to_string(), value)]);
+        assert!(
+            support::fixture_conf::snippet_parse_options(&conf).is_err(),
+            "{key}"
+        );
+    }
 }
 
 #[test]
-fn a_mapped_conf_translates_onto_py_sig_config() {
+fn a_mapped_conf_translates_onto_the_parse_options() {
     let conf: BTreeMap<String, serde_json::Value> = serde_json::from_str(
         r#"{
             "maximum_signature_line_length": 8,
             "python_maximum_signature_line_length": null,
             "python_trailing_comma_in_multi_line_signatures": false,
             "python_use_unqualified_type_names": true,
-            "add_function_parentheses": false
+            "add_function_parentheses": false,
+            "default_role": "any",
+            "primary_domain": null,
+            "highlight_language": "python3",
+            "manpages_url": "https://man.example/{page}",
+            "rst_prolog": ".. role:: python(code)\n",
+            "rst_epilog": null
         }"#,
     )
     .unwrap();
-    let py = py_config_from_conf(&conf).unwrap();
+    let parse = support::fixture_conf::snippet_parse_options(&conf).unwrap();
     assert_eq!(
-        py,
+        parse.py,
         PySigConfig {
             maximum_signature_line_length: Some(8),
             python_maximum_signature_line_length: None,
@@ -183,22 +139,42 @@ fn a_mapped_conf_translates_onto_py_sig_config() {
             ..PySigConfig::default()
         }
     );
+    assert_eq!(
+        parse.read,
+        ReadConfig {
+            default_role: Some("any".to_string()),
+            primary_domain: None,
+            highlight_language: "python3".to_string(),
+            manpages_url: Some("https://man.example/{page}".to_string()),
+            rst_prolog: Some(".. role:: python(code)\n".to_string()),
+            rst_epilog: None,
+            ..ReadConfig::default()
+        }
+    );
+    assert_eq!(
+        (
+            parse.source_path.as_str(),
+            parse.sphinx,
+            parse.docname.as_str()
+        ),
+        ("<snippet>", true, "index")
+    );
 }
 
 /// The read settings of a build whose configuration sets `keep_warnings`
-/// as `settings` records it: a [`BuildConfig`] with M1's validation off
-/// (decision 7), projected the way a build projects it.
+/// and `smartquotes` as `settings` records them: a [`BuildConfig`] with
+/// M1's validation off (decision 7), projected the way a dummy build
+/// projects it.
 fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
-    assert!(
-        !settings.smartquotes,
-        "no smart-quote transform exists yet, so only `smartquotes = False` \
-         reads like the oracle"
-    );
-    ReadSettings::from_config(&BuildConfig {
-        validate_directives: false,
-        keep_warnings: settings.keep_warnings,
-        ..BuildConfig::default()
-    })
+    ReadSettings::from_config(
+        &BuildConfig {
+            validate_directives: false,
+            keep_warnings: settings.keep_warnings,
+            smartquotes: settings.smartquotes,
+            ..BuildConfig::default()
+        },
+        BuilderKind::Dummy,
+    )
 }
 
 /// The pformat of our post-read doctree for `rst`, read standalone as the
@@ -233,8 +209,8 @@ fn matches_sphinx_oracle_pformat() {
     let settings = read_settings_of(&fixture.settings);
     let mut mismatches = Vec::new();
     for case in &fixture.cases {
-        let py = match py_config_from_conf(&case.conf) {
-            Ok(py) => py,
+        let parse = match support::fixture_conf::snippet_parse_options(&case.conf) {
+            Ok(parse) => parse,
             Err(err) => {
                 mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
                 continue;
@@ -242,19 +218,7 @@ fn matches_sphinx_oracle_pformat() {
         };
         let rst = case.rst.clone();
         let settings = settings.clone();
-        let ours = std::panic::catch_unwind(move || {
-            let parse = ParseOptions {
-                source_path: "<snippet>".into(),
-                sphinx: true,
-                docname: "index".into(),
-                exclude_patterns: Vec::new(),
-                py,
-                found_docs: None,
-                srcdir: None,
-                ..Default::default()
-            };
-            read_pformat(&rst, &parse, &settings)
-        });
+        let ours = std::panic::catch_unwind(move || read_pformat(&rst, &parse, &settings));
         match ours {
             Err(_) => mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst)),
             Ok(got) if got != case.pseudo_xml => mismatches.push(format!(
@@ -339,17 +303,16 @@ fn runnable_docutils_snippets() -> BTreeSet<String> {
 }
 
 /// The build configuration the oracle's `conf.py` gives, read the way the
-/// CLI reads it, with M1's validation off (decision 7).
+/// CLI reads it, with M1's validation off (decision 7). The oracle turns
+/// smart quotes off there (`smartquotes = False`), which the read honours.
 fn conf_py_config(conf: &str) -> BuildConfig {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let path = dir.path().join("conf.py");
     std::fs::write(&path, conf).expect("conf.py writes");
     let config = BuildConfig::from_conf_py(&path).expect("the oracle conf.py loads");
-    assert_eq!(
-        config.conf_values.get("smartquotes"),
-        Some(&serde_json::Value::Bool(false)),
-        "no smart-quote transform exists yet, so only `smartquotes = False` reads \
-         like the oracle"
+    assert!(
+        !config.smartquotes,
+        "the oracle's conf.py turns smart quotes off"
     );
     BuildConfig {
         validate_directives: false,
@@ -372,7 +335,7 @@ fn snippet_mismatches(
         let config = configs
             .entry(case.conf.as_str())
             .or_insert_with(|| conf_py_config(&case.conf));
-        let settings = ReadSettings::from_config(config);
+        let settings = ReadSettings::from_config(config, BuilderKind::Dummy);
         let parse = ParseOptions {
             source_path: "<SRCDIR>/index.rst".to_string(),
             sphinx: true,

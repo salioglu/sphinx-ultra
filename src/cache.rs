@@ -13,6 +13,40 @@ use std::time::{Duration, UNIX_EPOCH};
 use crate::document::Document;
 use crate::error::BuildError;
 
+/// What a configuration change ([`BuildCache::new`]) and a fresh
+/// environment ([`BuildCache::clear`]) leave of the cache directory:
+/// intersphinx's inventory cache ([`crate::intersphinx::CACHE_DIR_NAME`]).
+/// Sphinx keeps it in its doctree directory (`app.doctreedir /
+/// '__intersphinx_cache__'`, `SP/sphinx/ext/intersphinx/_load.py:186-190`),
+/// which neither a configuration change nor a fresh environment deletes,
+/// and reads a project's file there whenever its own memory holds no
+/// inventory for the project's target URI and the file is not older than
+/// `intersphinx_cache_limit` (`_load.py:264-280`).
+const KEPT_ACROSS_CLEARS: [&str; 1] = [crate::intersphinx::CACHE_DIR_NAME];
+
+/// Empty `dir` of everything but [`KEPT_ACROSS_CLEARS`], creating it when
+/// it is missing.
+fn empty_keeping_inventories(dir: &Path) -> Result<()> {
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if KEPT_ACROSS_CLEARS
+                .iter()
+                .any(|kept| entry.file_name() == *kept)
+            {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    std::fs::create_dir_all(dir)?;
+    Ok(())
+}
+
 pub struct BuildCache {
     cache_dir: PathBuf,
     config_fingerprint: String,
@@ -21,6 +55,9 @@ pub struct BuildCache {
     file_hashes: Arc<RwLock<HashMap<PathBuf, String>>>,
     hit_count: Arc<RwLock<usize>>,
     miss_count: Arc<RwLock<usize>>,
+    /// How many documents [`Self::store_document`] has stored, each one
+    /// written to its cache file.
+    store_count: Arc<RwLock<usize>>,
     max_size_mb: usize,
     expiration_duration: Duration,
 }
@@ -44,7 +81,8 @@ impl BuildCache {
         std::fs::create_dir_all(&cache_dir)?;
 
         // Cached documents were produced under a specific configuration; if
-        // the configuration changed, everything in the cache is stale.
+        // the configuration changed, everything in the cache is stale, but
+        // the inventories intersphinx fetched ([`KEPT_ACROSS_CLEARS`]).
         let fingerprint_file = cache_dir.join(".config-fingerprint");
         let stored = std::fs::read_to_string(&fingerprint_file).unwrap_or_default();
         let config_changed = stored.trim() != config_fingerprint;
@@ -52,8 +90,7 @@ impl BuildCache {
             if !stored.is_empty() {
                 debug!("Configuration changed; discarding cache");
             }
-            std::fs::remove_dir_all(&cache_dir)?;
-            std::fs::create_dir_all(&cache_dir)?;
+            empty_keeping_inventories(&cache_dir)?;
             std::fs::write(&fingerprint_file, config_fingerprint)?;
         }
 
@@ -65,6 +102,7 @@ impl BuildCache {
             file_hashes: Arc::new(RwLock::new(HashMap::new())),
             hit_count: Arc::new(RwLock::new(0)),
             miss_count: Arc::new(RwLock::new(0)),
+            store_count: Arc::new(RwLock::new(0)),
             max_size_mb,
             expiration_duration: Duration::from_secs(expiration_hours * 60 * 60),
         };
@@ -79,14 +117,16 @@ impl BuildCache {
     /// fingerprint validation/wipe). Callers that persist their own files
     /// alongside the document cache -- e.g. `BuildEnvironment::save`'s
     /// `env.bin` -- ride the same directory and are therefore covered by
-    /// the same fingerprint-mismatch wipe.
+    /// the same fingerprint-mismatch wipe, all but intersphinx's inventory
+    /// cache ([`KEPT_ACROSS_CLEARS`]).
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }
 
     /// Whether this cache directory's stored fingerprint disagreed with the
-    /// configuration it was opened with — the whole directory was then
-    /// discarded, this build's documents, doctrees and `env.bin` included.
+    /// configuration it was opened with — the directory was then emptied,
+    /// this build's documents, doctrees and `env.bin` included, of all but
+    /// the inventories intersphinx fetched ([`KEPT_ACROSS_CLEARS`]).
     ///
     /// A first build counts too (there is no stored fingerprint to agree
     /// with), and in that case the effect matches Sphinx's `CONFIG_NEW`:
@@ -97,13 +137,28 @@ impl BuildCache {
     /// `CONFIG_CHANGED` (`environment/__init__.py:366-369`) fires only for
     /// config values whose rebuild class is `'env'` and never deletes
     /// doctrees, the environment or the intersphinx cache; this crate
-    /// compares one whole-configuration digest and wipes the directory. The
-    /// digest is therefore taken over a *filtered* configuration — see
-    /// `builder::EXCLUDED_FROM_FINGERPRINT` — so that operational flags
-    /// (`-W`, `-n`), which Sphinx cannot invalidate on, cannot invalidate
-    /// here either.
+    /// compares one whole-configuration digest and empties the directory
+    /// of all but the intersphinx cache. The digest is therefore taken over
+    /// a *filtered* configuration — see `builder::EXCLUDED_FROM_FINGERPRINT`
+    /// — so that operational flags (`-W`, `-n`), which Sphinx cannot
+    /// invalidate on, cannot invalidate here either.
     pub fn config_changed(&self) -> bool {
         self.config_changed
+    }
+
+    /// Claim the directory for the configuration whose fingerprint is
+    /// `config_fingerprint`, from now on: one the build changed as it ran
+    /// (Sphinx's `check_master_doc`), which the environment it saves
+    /// belongs to. The next build, opened with the configuration as written,
+    /// then finds it changed and reads every document again, as Sphinx does
+    /// when the configuration it pickled differs from `conf.py`'s.
+    pub fn restamp(&mut self, config_fingerprint: &str) -> Result<()> {
+        std::fs::write(
+            self.cache_dir.join(".config-fingerprint"),
+            config_fingerprint,
+        )?;
+        self.config_fingerprint = config_fingerprint.to_string();
+        Ok(())
     }
 
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
@@ -197,6 +252,7 @@ impl BuildCache {
 
         // Persist to disk asynchronously
         self.persist_to_disk(file_path, document)?;
+        *self.store_count.write() += 1;
 
         Ok(())
     }
@@ -221,7 +277,9 @@ impl BuildCache {
         debug!("Invalidated cache for {}", file_path.display());
     }
 
-    /// Empty the cache, in memory and on disk (`-E`, `--clean`).
+    /// Empty the cache, in memory and on disk (`-E`, `--clean`), of all but
+    /// the inventories intersphinx fetched ([`KEPT_ACROSS_CLEARS`]), which
+    /// Sphinx's fresh environment reads from its doctree directory too.
     ///
     /// The fingerprint file is written back immediately: it records which
     /// configuration the *directory* belongs to, and leaving it missing
@@ -234,11 +292,9 @@ impl BuildCache {
         self.file_hashes.write().clear();
         *self.hit_count.write() = 0;
         *self.miss_count.write() = 0;
+        *self.store_count.write() = 0;
 
-        if self.cache_dir.exists() {
-            std::fs::remove_dir_all(&self.cache_dir)?;
-        }
-        std::fs::create_dir_all(&self.cache_dir)?;
+        empty_keeping_inventories(&self.cache_dir)?;
         std::fs::write(
             self.cache_dir.join(".config-fingerprint"),
             &self.config_fingerprint,
@@ -255,6 +311,12 @@ impl BuildCache {
     #[allow(dead_code)]
     pub fn miss_count(&self) -> usize {
         *self.miss_count.read()
+    }
+
+    /// How many documents this cache has stored, and written to disk,
+    /// since it was opened or last cleared.
+    pub fn store_count(&self) -> usize {
+        *self.store_count.read()
     }
 
     #[allow(dead_code)]
@@ -559,6 +621,89 @@ mod tests {
             .unwrap()
             .config_changed());
         assert!(BuildCache::new(cache_dir, 500, 24, "fp-2")
+            .unwrap()
+            .config_changed());
+    }
+
+    #[test]
+    fn a_restamped_directory_belongs_to_the_configuration_the_build_changed_to() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        {
+            let mut cache = BuildCache::new(cache_dir.clone(), 500, 24, "as-written").unwrap();
+            cache.restamp("as-changed").unwrap();
+            cache
+                .store_document(&source, &make_document(&source))
+                .unwrap();
+        }
+        // The next build, opened with the configuration as written, starts
+        // over.
+        let mut cache = BuildCache::new(cache_dir.clone(), 500, 24, "as-written").unwrap();
+        assert!(cache.config_changed());
+        assert!(cache.get_document(&source).is_err());
+
+        // A clear after a restamp keeps the changed configuration's claim.
+        cache.restamp("as-changed").unwrap();
+        cache.clear().unwrap();
+        assert!(!BuildCache::new(cache_dir, 500, 24, "as-changed")
+            .unwrap()
+            .config_changed());
+    }
+
+    /// Sphinx keeps the inventories intersphinx fetched in its doctree
+    /// directory, which neither a configuration change nor a fresh
+    /// environment deletes: a configuration change and a clear (`-E`)
+    /// empty the cache directory of everything else, documents and
+    /// doctrees, and keep `__intersphinx_cache__` with its files and their
+    /// mtimes, which the next build reads before it would fetch.
+    #[test]
+    fn the_inventory_cache_survives_a_configuration_change_and_a_fresh_environment() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+        let inventories = cache_dir.join(crate::intersphinx::CACHE_DIR_NAME);
+        let inventory = inventories.join("x_objects.inv");
+        let doctree = cache_dir.join("doctrees").join("page.doctree");
+
+        let fill = || {
+            std::fs::create_dir_all(&inventories).unwrap();
+            std::fs::write(&inventory, b"# Sphinx inventory version 2\n").unwrap();
+            std::fs::create_dir_all(doctree.parent().unwrap()).unwrap();
+            std::fs::write(&doctree, b"doctree").unwrap();
+        };
+        let mtime = |path: &Path| std::fs::metadata(path).unwrap().modified().unwrap();
+
+        let cache = BuildCache::new(cache_dir.clone(), 500, 24, "before").unwrap();
+        fill();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+        let fetched_at = mtime(&inventory);
+        drop(cache);
+
+        let cache = BuildCache::new(cache_dir.clone(), 500, 24, "after").unwrap();
+        assert!(cache.config_changed());
+        assert!(cache.get_document(&source).is_err(), "documents go");
+        assert!(!doctree.exists(), "doctrees go");
+        assert_eq!(
+            std::fs::read(&inventory).unwrap(),
+            b"# Sphinx inventory version 2\n"
+        );
+        assert_eq!(mtime(&inventory), fetched_at, "the expiry basis stays");
+
+        fill();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+        cache.clear().unwrap();
+        assert!(cache.get_document(&source).is_err());
+        assert!(!doctree.exists());
+        assert!(inventory.is_file(), "a fresh environment keeps it too");
+        assert!(!BuildCache::new(cache_dir, 500, 24, "after")
             .unwrap()
             .config_changed());
     }

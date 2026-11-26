@@ -41,8 +41,9 @@ const INVENTORY_FILENAME: &str = "objects.inv";
 /// The on-disk cache directory, relative to the doctree/cache directory
 /// (`app.doctreedir / '__intersphinx_cache__'`, `_load.py:186-190`). Sphinx
 /// documents that "the location of this cache directory must not be relied
-/// upon externally"; ours rides the fingerprint-wiped cache dir, so a
-/// configuration change clears it along with everything else.
+/// upon externally"; ours lives in the cache directory, which a
+/// configuration change and a fresh environment empty of everything but
+/// it, as neither deletes Sphinx's (`crate::cache::BuildCache::clear`).
 pub const CACHE_DIR_NAME: &str = "__intersphinx_cache__";
 
 /// The normalised `intersphinx_mapping`: project name -> (target URI,
@@ -188,7 +189,8 @@ pub fn mapping_config_error(errors: usize) -> String {
     }
 }
 
-/// Python's `repr()` for the JSON shapes a `conf.py` literal can produce.
+/// Python's `repr()` for the JSON shapes a `conf.py` literal can produce,
+/// a number's through [`crate::pyformat::number_str`].
 /// Sequences render as lists — see [`validate_mapping`]'s doc comment for
 /// why a tuple cannot be told apart here.
 fn py_repr_value(value: &JsonValue) -> String {
@@ -196,7 +198,7 @@ fn py_repr_value(value: &JsonValue) -> String {
         JsonValue::Null => "None".to_string(),
         JsonValue::Bool(true) => "True".to_string(),
         JsonValue::Bool(false) => "False".to_string(),
-        JsonValue::Number(n) => n.to_string(),
+        JsonValue::Number(n) => crate::pyformat::number_str(n),
         JsonValue::String(s) => py_repr_str(s),
         JsonValue::Array(items) => {
             let inner: Vec<String> = items.iter().map(py_repr_value).collect();
@@ -282,11 +284,14 @@ pub struct LoadOutcome {
 /// Two things Sphinx's memory cache does that this one cannot:
 ///
 /// 1. **Pruning.** Sphinx drops a cached entry whose project changed target
-///    URI (`_load.py:164-173`), where a disk file keyed by project name alone
-///    would otherwise serve bytes fetched from somewhere else. Covered a
-///    layer up here: changing a target URI changes `intersphinx_mapping`,
-///    changes the configuration fingerprint, and wipes the whole cache
-///    directory this file lives in.
+///    URI (`_load.py:164-173`). Its disk file, keyed by project name alone,
+///    stays, and with no entry in memory for the new target URI Sphinx
+///    reads it while it is not older than `intersphinx_cache_limit`
+///    (`_load.py:264-280`), resolving against the new target URI the bytes
+///    fetched from the old one. This port does the same, because the file
+///    survives the configuration change that the new target URI is
+///    (`crate::cache::BuildCache::config_changed`); its in-memory map
+///    starts empty on every build, so it has nothing to prune.
 /// 2. **Graceful degradation, which is genuinely lost.** In Sphinx the
 ///    previous inventory stays in `env.intersphinx_cache` across builds, so
 ///    when an *expired* remote's refresh fails the old data is still there

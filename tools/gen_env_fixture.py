@@ -187,11 +187,10 @@ def tail():
 # BASE_CONFOVERRIDES; `files` maps docname -> rst source (nested docnames
 # like "sub/b" get written to sub/b.rst). An optional `data_files` map
 # (relative path -> literal text) ships non-document members -- the .py /
-# .inc / .png files the include and literalinclude projects read. Data
-# files must NOT use the .rst/.md/.txt suffixes: sphinx-ultra's discovery
-# is wider than Sphinx's default `source_suffix` (it also admits .md and
-# .txt), so a .txt member would become a document on one side only and the
-# resolved-document key sets would diverge by construction.
+# .inc / .png files the include and literalinclude projects read. A data
+# file is a document when its name ends with a `source_suffix`, `.rst`
+# alone by default: the source_suffix_* projects ship .txt and .md files,
+# which `source_suffix = ['.rst', '.txt']` makes documents in part.
 # ---------------------------------------------------------------------------
 
 PROJECTS = [
@@ -1501,6 +1500,800 @@ Intro.
 """,
             "part": """\
 Para `x`__.
+""",
+        },
+    },
+    # -----------------------------------------------------------------------
+    # `smartquotes_resolved` (wave 5a T16b, smart-quotes report §6.5): the one
+    # project read with smart quotes on, Sphinx's default. The read educates
+    # the tree's text, so titles, and with them the toc entries, the implicit
+    # `:doc:`/`:ref:` text and the label's section name, and the explicit
+    # role titles; it leaves straight what the resolve pass reads from
+    # attributes -- the toctree caption and an explicit toctree entry title
+    # -- and the glossary term's std key, which the glossary directive notes
+    # before SmartQuotes (750) runs.
+    # -----------------------------------------------------------------------
+    {
+        "name": "smartquotes_resolved",
+        "conf": {"smartquotes": True},
+        "files": {
+            "index": """\
+"Index" -- title
+================
+
+.. toctree::
+   :caption: "Contents" -- here
+
+   a
+   "Explicit" title -- b <b>
+
+See :doc:`a`, :doc:`"T" <b>`, :ref:`sec-a`, :ref:`"R" -- r <sec-a>` and
+:term:`"Term" -- x`.
+
+.. glossary::
+
+   "Term" -- x
+      Def "x".
+""",
+            "a": """\
+"Doc A" -- it's
+===============
+
+.. _sec-a:
+
+"Section" in A
+--------------
+
+Text.
+""",
+            "b": """\
+Doc 'B'
+=======
+
+Text.
+""",
+        },
+    },
+    # -----------------------------------------------------------------------
+    # The role projects (wave 5a T17a, roles/config report §6.2): role
+    # dispatch warnings, and the build-scoped role registry, where `.. role::`
+    # and, while `default_role` is unset, `.. default-role::` reach every
+    # document read after their own, in sorted docname order.
+    # -----------------------------------------------------------------------
+    {
+        # P03b and P16: an unknown domain prefix warns `unknown role name`
+        # (no location) before the ERROR of the same role, and the std
+        # domain gets the role name after it; directives likewise.
+        "name": "roles_dispatch_warnings",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+""",
+            "a": """\
+A
+=
+
+:std:kbd:`x`
+
+:py:kbd:`x`
+
+:bogus:`x`
+
+:foo:bar:`x`
+
+:KBD:`Ctrl+X`
+
+:kbd:`a <b>`
+
+:guilabel:`x <y>`
+
+:samp:`x <{y}>`
+
+:abbr:`x <y> (z)`
+
+:program:`a
+b`
+""",
+            "b": """\
+B
+=
+
+:foo:ref:`lbl` :foo:kbd:`x` :FOO:Doc:`index`
+
+.. foo:envvar:: E
+
+.. foo:note:: n
+""",
+        },
+    },
+    {
+        # `a` uses `red` before `b` defines it; `c` uses both of `b`'s roles.
+        "name": "role_directive_leak",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+""",
+            "a": """\
+A
+=
+
+Early :red:`x`.
+""",
+            "b": """\
+B
+=
+
+.. role:: red
+
+.. role:: k(kbd)
+
+Here :red:`y` and :k:`Ctrl+C`.
+""",
+            "c": """\
+C
+=
+
+Later :red:`z` and :k:`Alt+F4`.
+""",
+        },
+    },
+    {
+        # Without `default_role`, `a`'s `.. default-role:: math` reaches `b`,
+        # and `c`'s `.. default-role:: py:obj` (a domain's role, which is
+        # called with its full name) reaches `d`.
+        "name": "default_role_leak",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+   d
+""",
+            "a": """\
+A
+=
+
+.. default-role:: math
+
+Inline `a^2`.
+""",
+            "b": """\
+B
+=
+
+Still `b^2`.
+""",
+            "c": """\
+C
+=
+
+.. default-role:: py:obj
+
+See `os.path`.
+""",
+            "d": """\
+D
+=
+
+And `sys`.
+""",
+        },
+    },
+    {
+        # The same files with `default_role` set: each document starts
+        # from it again, the registration ending with the document.
+        "name": "default_role_conf_resets",
+        "conf": {"default_role": "literal"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+   d
+""",
+            "a": """\
+A
+=
+
+.. default-role:: math
+
+Inline `a^2`.
+""",
+            "b": """\
+B
+=
+
+Still `b^2`.
+""",
+            "c": """\
+C
+=
+
+.. default-role:: py:obj
+
+See `os.path`.
+""",
+            "d": """\
+D
+=
+
+And `sys`.
+""",
+        },
+    },
+    {
+        # A `default_role` no role answers warns at each document.
+        "name": "default_role_unknown_conf",
+        "conf": {"default_role": "nonexistent"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+
+`index` text.
+""",
+            "a": """\
+A
+=
+
+`a` text.
+""",
+        },
+    },
+    {
+        # P07: `highlight_language` at read time (`code-block` and `code`
+        # with no argument) and in the resolve pass's
+        # HighlightLanguageTransform; each document starts over.
+        "name": "highlight_language_project",
+        "conf": {"highlight_language": "python3"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+""",
+            "a": """\
+A
+=
+
+Para::
+
+    x = 1
+
+.. code-block::
+
+   y = 2
+
+.. code::
+
+   z = 3
+
+>>> 1 + 1
+2
+
+.. highlight:: c
+   :linenothreshold: 2
+
+Para2::
+
+    int a;
+    int b;
+
+.. code-block::
+
+   int c;
+
+.. code-block:: ruby
+
+   puts 1
+
+.. parsed-literal::
+
+   *bold*
+
+.. highlight:: none
+   :force:
+
+Para3::
+
+    plain
+""",
+            "b": """\
+B
+=
+
+.. code-block::
+
+   b = 1
+
+Para::
+
+    c = 2
+""",
+        },
+    },
+    {
+        # `.. default-domain:: js`: unprefixed roles go to the js domain
+        # first (`fix_parens`, `js:module`/`js:object`), then std; `exc` has
+        # neither. js references stay unresolved (refwarn 0).
+        "name": "primary_domain_js_roles",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+""",
+            "a": """\
+A
+=
+
+.. default-domain:: js
+
+:func:`f` :meth:`o.m` :class:`K` :mod:`m` :data:`d` :attr:`x`
+
+:func:`~a.b` and :func:`.c` and :exc:`E` and :ref:`lbl`
+""",
+        },
+    },
+    {
+        # Wave 5a T17b, roles/config report §6.2 (P04a): `rst_prolog` and
+        # `rst_epilog` read around every document. Their records print
+        # `<rst_prologue>:3` and `<rst_epilogue>:3` once per document, in
+        # read order; the document's own lines keep their numbers; the
+        # prolog goes after `docinfo`'s field list and the epilog joins the
+        # last section.
+        "name": "rst_prolog_epilog",
+        "conf": {
+            "rst_prolog": ".. |psub| replace:: prolog text\n\n*unclosed prolog emphasis\n",
+            "rst_epilog": ".. |esub| replace:: epilog text\n\n*unclosed epilog emphasis\n",
+        },
+        "files": {
+            "index": """\
+Title
+=====
+
+Body |psub| and |esub|.
+
+*unclosed body emphasis
+
+See :ref:`nolabel`.
+
+.. image:: missing.png
+
+.. _dup:
+
+Para.
+
+.. _dup:
+
+Para2.
+
+.. toctree::
+
+   docinfo
+   missing_doc
+""",
+            "docinfo": """\
+:author: Me
+:date: 2020
+
+Second
+======
+
+*unclosed after docinfo
+""",
+        },
+    },
+    {
+        # Wave 5a T17b, roles/config report §6.2 (P18): a warning Sphinx
+        # logs at a directive's raw line (`location=(docname, self.lineno)`)
+        # counts a 3-line `rst_prolog` and the blank line after it, and one
+        # more after a leading field-marker line (`.. hlist content is not
+        # a list`: index line 4 at 8, orphan line 6 at 11); the reporter's
+        # own records keep the document's lines.
+        "name": "rst_prolog_raw_lineno",
+        "conf": {
+            "rst_prolog": ".. |a| replace:: A\n.. |b| replace:: B\n.. |c| replace:: C\n",
+        },
+        "files": {
+            "index": """\
+T
+=
+
+.. hlist::
+
+   not a list
+
+See :external:py:func:`f`.
+""",
+            "orphan": """\
+:orphan:
+
+T
+=
+
+.. hlist::
+
+   not a list
+
+See :external:py:func:`f`.
+""",
+        },
+    },
+    {
+        # Wave 5a T17b, review fix round 1 (decision 14 as refined): the
+        # first document Sphinx reads (`a`) starts from the registries no
+        # document has changed, so its leading field lines, which come
+        # before `rst_prolog`, miss the prolog's role and default role: an
+        # unknown-role error and `title_reference`. Every later document's
+        # (`b`, then `index`) see both, through the registries the prolog
+        # left: `inline` and `math`. DocInfo moves `:abstract:` and
+        # `:dedication:` into the body as topics, which MetadataCollector
+        # leaves in place.
+        "name": "rst_prolog_first_read_fields",
+        "conf": {
+            "rst_prolog": ".. role:: red\n\n.. default-role:: math\n",
+        },
+        "files": {
+            "index": """\
+:dedication: For :red:`you` and `x^2`.
+
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+
+Index :red:`i` and `i^2`.
+""",
+            "a": """\
+:abstract: Uses :red:`r` and `a^2`.
+
+A
+=
+
+Early :red:`x` and `a^3`.
+""",
+            "b": """\
+:abstract: Uses :red:`s` and `b^2`.
+:dedication: To `b`.
+
+B
+=
+
+Later :red:`y` and `b^3`.
+""",
+        },
+    },
+    {
+        # Wave 5a T17c (roles/config report §4.5, §6.2, P08): discovery
+        # keeps a file only when its name ends with a `source_suffix`,
+        # `.rst` alone by default, so `notes.txt` and `readme.md` are no
+        # documents: the toctree names three documents the project does not
+        # have, `notes.txt` unstripped, and `:doc:` two.
+        "name": "source_suffix_default",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   notes
+   readme
+   notes.txt
+
+:doc:`notes` :doc:`readme`
+""",
+        },
+        "data_files": {
+            "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+            "readme.md": "# Readme\n\nSome *markdown*.\n",
+        },
+    },
+    {
+        # Wave 5a T17c: the same files under `source_suffix = ['.rst',
+        # '.txt']`, which `notes.txt` ends with: it is the document `notes`,
+        # read as reStructuredText, and the toctree entry `notes.txt` is
+        # stripped of its suffix, a duplicate of `notes`.
+        "name": "source_suffix_txt",
+        "conf": {"source_suffix": [".rst", ".txt"]},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   notes
+   readme
+   notes.txt
+
+:doc:`notes` :doc:`readme`
+""",
+        },
+        "data_files": {
+            "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+            "readme.md": "# Readme\n\nSome *markdown*.\n",
+        },
+    },
+    {
+        # Wave 5a T17c (roles/config report §3.8, §6.2, P02 `r_download`):
+        # the DownloadFileCollector at 880 gives a readable file's reference
+        # its `filename` (`<md5 of its srcdir-relative path>/<name>`,
+        # `f.txt` and `/f.txt` one file), a URL target its `refuri`, and an
+        # unreadable one a `download file not readable` warning at the
+        # node; every file target is a dependency of `a`.
+        "name": "roles_download",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+""",
+            "a": """\
+:download:`f.txt`
+
+:download:`the file <f.txt>`
+
+:download:`sub/g.txt`
+
+:download:`/f.txt`
+
+:download:`missing.txt`
+
+:download:`https://example.com/x.zip`
+
+:download:`!f.txt`
+
+:download:`f  .txt`
+""",
+        },
+        "data_files": {
+            "f.txt": "f\n",
+            "sub/g.txt": "g\n",
+        },
+    },
+    {
+        # Wave 5a T18a (structure-directives report §3.5, §6.3): the `title`
+        # directive sets the document's `title` attribute, which every
+        # resolved document line shows; `env.titles`, which toctree entries
+        # show, keeps the first section title, so `index` lists `Sub`; a
+        # document without a section takes the attribute as its title but
+        # keeps an empty toc, so the toctree naming it still warns that it
+        # has no title (`toc.no_title`). The longtitles are pinned by unit
+        # tests (`title_sets_longtitle_only`).
+        "name": "title_directive",
+        "conf": {},
+        "files": {
+            "index": """\
+.. title:: Custom <Page> & Title
+
+Real Title
+==========
+
+Body.
+
+.. toctree::
+
+   sub
+   nosec
+""",
+            "sub": """\
+.. title:: Sub Long Title
+
+Sub
+===
+
+Body.
+""",
+            "nosec": """\
+.. title:: Only Title
+
+Just a paragraph.
+""",
+        },
+    },
+    {
+        # Wave 5a T18b (structure-directives report §3.2, §6.3,
+        # `sectnum_toctree_numbered`): SectNum (710) numbers `sub`'s titles
+        # before the title and toc collectors (880) read them, so
+        # `env.titles`, `env.tocs` and the resolved `index` toctree carry
+        # its `generated` nodes, beside the `:numbered:` toctree's own
+        # `secnumber`s.
+        "name": "sectnum_numbered_toctree",
+        "conf": {},
+        "files": {
+            "index": """\
+Root
+====
+
+.. toctree::
+   :numbered:
+
+   sub
+""",
+            "sub": """\
+Title
+=====
+
+.. sectnum::
+
+Section A
+---------
+
+Text A.
+
+Sub A1
+~~~~~~
+
+Text A1.
+
+Section B
+---------
+
+Text B.
+""",
+        },
+    },
+    {
+        # Wave 5a T18b (structure-directives report §6.3,
+        # `contents_two_docs`): a local, one-level contents table in a
+        # subdocument; Contents (720) lists `sub`'s sections in the tree,
+        # and `env.tocs` holds the document's sections alone, not the
+        # table's entries.
+        "name": "contents_in_subdoc",
+        "conf": {},
+        "files": {
+            "index": """\
+Root
+====
+
+.. toctree::
+
+   sub
+""",
+            "sub": """\
+Title
+=====
+
+.. contents::
+   :local:
+   :depth: 1
+
+Section A
+---------
+
+Text A.
+
+Sub A1
+~~~~~~
+
+Text A1.
+
+Section B
+---------
+
+Text B.
+""",
+        },
+    },
+    {
+        # Wave 5a T18b (structure-directives report §3.1,
+        # `contents_unresolved_xref_title`): the contents entry copies the
+        # title's `pending_xref` (docutils' ContentsFilter), and the write
+        # phase resolves both, so the unresolved `:ref:` warns twice,
+        # identically.
+        "name": "contents_unresolved_xref",
+        "conf": {},
+        "files": {
+            "index": """\
+Title
+=====
+
+.. contents::
+
+About :ref:`missing-label`
+--------------------------
+
+x
+""",
+        },
+    },
+    {
+        # Wave 5a T18c (structure-directives report §3.9): the std domain's
+        # `productionlist` notes each named production as a std `token`
+        # object (`ProductionList.make_name_target`), `group:name` in a
+        # production group (`a`'s `lang`) and the bare name outside one.
+        # `b` and then `index` describe `term`: the later read warns
+        # (`duplicate token description of term, other instance in b`) and
+        # its registration wins. A production's backquoted tokens and the
+        # `:token:` role resolve against the objects: a bare token in a
+        # group names `group:name` (`a`'s `expr` finds nothing), `:name`
+        # leaves the group, and a token that resolves to nothing warns
+        # nowhere.
+        "name": "productionlist_tokens",
+        "conf": {},
+        "files": {
+            "index": """\
+Grammar
+=======
+
+.. toctree::
+
+   a
+   b
+
+.. productionlist::
+   expr: `term` ("+" `term`)*
+   term: `factor` | `lang:stmt`
+
+See :token:`expr`, :token:`lang:stmt`, :token:`missing` and :token:`the term <term>`.
+""",
+            "a": """\
+A
+=
+
+.. productionlist:: lang
+   stmt: `expr` ";"
+   factor: "x"
+       : `:term`
+
+See :token:`stmt` and :token:`lang:factor`.
+""",
+            "b": """\
+B
+=
+
+.. productionlist::
+   term: "dup"
+
+See :token:`term`.
 """,
         },
     },

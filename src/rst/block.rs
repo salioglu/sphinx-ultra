@@ -16,14 +16,16 @@
 
 use crate::doctree::ids;
 use crate::doctree::pending::{Pending, PendingTransform, PyValue};
-use crate::doctree::{kinds, messages, AttrValue, Node, NodeExt, Span};
+use crate::doctree::{kinds, messages, AttrValue, Attrs, Node, NodeExt, Span};
+use crate::pyformat;
 use crate::transforms::state::{DocLoc, DocumentState, SourceRef};
 use crate::utils::py_splitlines;
 
 use std::sync::Arc;
 
 use super::lines::{LineRec, Lines};
-use super::roles::{DispatchCtx, DomainId};
+use super::roles::custom::{role_arguments, CustomRole, RoleOptionSpec, RoleOptions};
+use super::roles::{DispatchCtx, DomainId, Resolution, RoleFn, RoleTable};
 
 const ADORNMENT_CHARS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const BULLET_CHARS: [char; 6] = ['*', '+', '-', '\u{2022}', '\u{2023}', '\u{2043}'];
@@ -447,6 +449,103 @@ pub(crate) struct BlockParser {
     /// reads in a nested machine, leave the position where its first item
     /// put it.
     top_block_pending: bool,
+    /// How many children docutils' `document` has while the top-level
+    /// construct being parsed runs: the top-level nodes before it, the
+    /// top-level section it is in, which docutils attaches to the document
+    /// when it opens it, and a top-level list once docutils has attached
+    /// it, with what the construct appended before it
+    /// ([`Self::note_list_attached`]). A `meta`, `header` or `footer`
+    /// directive inserts into the document as it stands then ([`HeadOp`]).
+    /// The message docutils appends right after an enumerated list whose
+    /// start value is not 1, before its first item, is not counted: the
+    /// list before it already decides where an insertion goes.
+    root_seen: usize,
+    /// What the `meta`, `title`, `header` and `footer` directives do to
+    /// the document itself, replayed onto the root when the parse ends
+    /// ([`DocEffects::apply`]).
+    effects: DocEffects,
+}
+
+/// What the `meta`, `title`, `header` and `footer` directives do to
+/// docutils' `document` itself rather than to the nodes a directive
+/// returns ([SD §7.3]): the parser builds the root only when the parse
+/// ends, so it records them as they run and replays them then.
+#[derive(Debug, Default)]
+struct DocEffects {
+    /// `document['title']`, the last `title` directive's argument.
+    title: Option<String>,
+    /// The insertions into the document, in the order the directives ran.
+    ops: Vec<HeadOp>,
+    /// `document.decoration` once a directive asked for it, holding its
+    /// `header` (first) and `footer` (last) with what the directives
+    /// parsed into them ([`BlockParser::run_decoration`]); the insertion
+    /// that made it puts it into the document ([`HeadOp::CreateDecoration`]).
+    decoration: Option<Node>,
+}
+
+/// One insertion a directive makes into the document, which then holds
+/// `root_seen` children ([`BlockParser::root_seen`]) besides what earlier
+/// insertions put there. Both insert before the document's first child
+/// that is not a title, subtitle, rubric or meta (docutils'
+/// `first_child_not_matching_class((nodes.Titular, nodes.meta))`).
+#[derive(Debug)]
+enum HeadOp {
+    /// `Meta.run`'s `document[index:index] = node.children`
+    /// (`SP/docutils/parsers/rst/directives/misc.py:633-635`), at the
+    /// document's start when every child matches (`... or 0`).
+    Insert { root_seen: usize, nodes: Vec<Node> },
+    /// The first `document.get_decoration()` (`nodes.py:2108-2116`), at the
+    /// document's end when every child matches.
+    CreateDecoration { root_seen: usize },
+}
+
+impl DocEffects {
+    /// Builds docutils' document children from the top-level nodes the
+    /// parse appended to `root`, in order: each insertion is replayed once
+    /// the document holds the `root_seen` of them it saw, and the rest of
+    /// them follow. Sets the document's `title`.
+    fn apply(self, root: &mut Node) {
+        if let Some(title) = self.title {
+            root.set("title", AttrValue::Str(title));
+        }
+        if self.ops.is_empty() {
+            return;
+        }
+        let mut decoration = self.decoration;
+        let mut parsed = std::mem::take(&mut root.children).into_iter();
+        let mut taken = 0;
+        let children = &mut root.children;
+        for op in self.ops {
+            let root_seen = match &op {
+                HeadOp::Insert { root_seen, .. } | HeadOp::CreateDecoration { root_seen } => {
+                    *root_seen
+                }
+            };
+            while taken < root_seen {
+                let Some(node) = parsed.next() else { break };
+                children.push(node);
+                taken += 1;
+            }
+            let index = children.iter().position(|child| {
+                !matches!(
+                    child.kind,
+                    kinds::TITLE | kinds::SUBTITLE | "rubric" | "meta"
+                )
+            });
+            match op {
+                HeadOp::Insert { nodes, .. } => {
+                    let at = index.unwrap_or(0);
+                    children.splice(at..at, nodes);
+                }
+                HeadOp::CreateDecoration { .. } => {
+                    if let Some(decoration) = decoration.take() {
+                        children.insert(index.unwrap_or(children.len()), decoration);
+                    }
+                }
+            }
+        }
+        children.extend(parsed);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -521,6 +620,25 @@ fn explicit_list_goes_on(explicit: bool, ending: Ending) -> Option<Ending> {
     (explicit && matches!(ending, Ending::OffEnd | Ending::BlankEnded)).then_some(ending)
 }
 
+/// docutils' `abs_line_number()` for the line `lineno` of a source, which
+/// the top-level input holds first at `offset` (`None` when it does not):
+/// the 1-based offset, or, counted in its own file (`own_line`, a glossary
+/// definition's machine, [`BlockParser::definition_bias_base`]), the line
+/// itself, plus the machine's count over it (`bias`). A line the input
+/// does not hold has no count here, glossary definition or not: it keeps
+/// its own line. The one rule for a node's location
+/// ([`BlockParser::resolve_absolute_lines`]) and a directive's
+/// `self.lineno` ([`BlockParser::abs_line_number`]).
+fn counted_line(offset: Option<usize>, lineno: u32, bias: u32, own_line: bool) -> Option<u32> {
+    let offset = offset?;
+    let counted = if own_line {
+        lineno
+    } else {
+        u32::try_from(offset).unwrap_or(u32::MAX).saturating_add(1)
+    };
+    Some(counted.saturating_add(bias))
+}
+
 /// docutils' `reporter.get_source_and_line(None)` after the parse: the
 /// top-level state machine's final `line_offset` read against its input
 /// (`SP/docutils/statemachine.py:358-383`), given the top-level input
@@ -568,10 +686,28 @@ fn current_after(lines: &[LineRec], ending: Ending) -> DocLoc {
     }
 }
 
+/// The source table the `rst_prolog`/`rst_epilog` decoration reads the
+/// document's lines from and adds its own sources to.
+impl super::prolog::Sources for BlockParser {
+    fn line_text(&self, line: LineRec) -> &str {
+        self.sources.line_text(line)
+    }
+
+    fn add_source(&mut self, path: &str, lines: &[&str]) -> Option<(u16, Vec<LineRec>)> {
+        self.push_raw_lines(Arc::from(path), lines, 1)
+    }
+}
+
 impl BlockParser {
     /// Parser over one document: the single-source form (entry 0 = the
-    /// document, linenos `1..=n`).
-    pub(crate) fn new(source: &str, source_path: &str) -> Self {
+    /// document, linenos `1..=n`), decorated as Sphinx's reader decorates
+    /// it with `rst_prolog` and `rst_epilog` ([`super::prolog`]; nothing
+    /// in docutils mode).
+    pub(crate) fn new(
+        source: &str,
+        source_path: &str,
+        decoration: super::prolog::Decoration<'_>,
+    ) -> Self {
         let (text, top) = Lines::new(source).into_parts();
         let mut sources = SourceTable::default();
         let path: Arc<str> = Arc::from(source_path);
@@ -580,6 +716,9 @@ impl BlockParser {
             .expect("a fresh table accepts entry 0");
         let mut parser = BlockParser::from_parts(top, sources);
         parser.state.parse.sources.push(path);
+        let mut top = std::mem::take(&mut parser.top);
+        super::prolog::decorate(&mut top, &mut parser, decoration);
+        parser.top = top;
         parser
     }
 
@@ -625,6 +764,8 @@ impl BlockParser {
             detached_end: DocLoc::default(),
             machine_position: None,
             top_block_pending: false,
+            root_seen: 0,
+            effects: DocEffects::default(),
         }
     }
 
@@ -662,6 +803,25 @@ impl BlockParser {
             dependencies: parse.dependency_records,
             included: parse.included_records,
         };
+        // `sphinx.util.rst.default_role` unregisters `''` when the
+        // document ends, whatever its `.. default-role::` did, but only
+        // with `default_role` set: without, the document's default role
+        // leaks into the next ([RC §4.2]).
+        let mut roles_after = match parse.roles {
+            Some(roles) => std::sync::Arc::unwrap_or_clone(roles),
+            None => super::roles::RoleTable::builtin(self.sphinx)
+                .as_ref()
+                .clone(),
+        };
+        if self.sphinx
+            && self
+                .read
+                .default_role
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+        {
+            roles_after.set_default(None);
+        }
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
                 root,
@@ -672,6 +832,7 @@ impl BlockParser {
             toctrees: parse.toctree_records,
             registry,
             state: self.state,
+            roles_after,
         }
     }
 
@@ -777,6 +938,7 @@ impl BlockParser {
                 py_modules_key: self.py_modules_key,
             },
             &self.py,
+            &self.read,
         );
         self.state.parse.role_records.append(&mut result.roles);
         result
@@ -792,14 +954,13 @@ impl BlockParser {
     /// [`Self::parse_nested`] into a container that has `document` set
     /// while it is filled. Sphinx's `nested_parse_to_nodes` parses into an
     /// anonymous `Element` it attaches first (`SP/sphinx/util/parsing.py:62-63`):
-    /// glossary definitions (`domains/std/__init__.py:541`) and `hlist`
-    /// (`directives/other.py:289`) here; object description content
-    /// (`directives/__init__.py:288`) and `py:module` content
-    /// (`domains/python/__init__.py:505`), which match titles, through
-    /// [`Self::parse_nested_titled`], as `only` (which sets
-    /// `node.document` itself, `directives/other.py:322`). The changeset
-    /// directives do both (`domains/changeset.py:67,82`), but their
-    /// content is not nested-parsed here.
+    /// glossary definitions (`domains/std/__init__.py:541`), `hlist`
+    /// (`directives/other.py:289`) and the content of the changeset
+    /// directives (`domains/changeset.py:82`, [`Self::run_version_change`])
+    /// here; object description content (`directives/__init__.py:288`) and
+    /// `py:module` content (`domains/python/__init__.py:505`), which match
+    /// titles, through [`Self::parse_nested_titled`], as `only` (which sets
+    /// `node.document` itself, `directives/other.py:322`).
     fn parse_nested_attached(&mut self, lines: &[LineRec], kind: &'static str) -> Vec<Node> {
         self.parse_nested_into(lines, kind, true)
     }
@@ -934,6 +1095,9 @@ impl BlockParser {
         sub.depth = self.depth;
         // A nested state machine: the top-level one stays where it is.
         sub.machine_position = self.machine_position;
+        // The document the sub-parse's directives change is this one's.
+        sub.root_seen = self.root_seen;
+        sub.effects = std::mem::take(&mut self.effects);
         sub.generated_text = generated.then_some(first_lineno);
         // The mode must flow through the detached parse (review finding:
         // csv cells previously parsed in docutils mode).
@@ -963,7 +1127,60 @@ impl BlockParser {
         self.detached_end = current_after(&top, sub.ending);
         self.sources = sub.sources;
         self.state = sub.state;
+        self.effects = sub.effects;
         nodes
+    }
+
+    /// [`Self::push_source`] over `lines` joined, numbered from
+    /// `first_lineno`, with one record per line: `Lines` never yields a
+    /// line after the final newline (and an all-empty text yields none at
+    /// all), so trailing blank lines come back as zero-width views.
+    fn push_lines<S: std::borrow::Borrow<str>>(
+        &mut self,
+        path: Arc<str>,
+        lines: &[S],
+        first_lineno: u32,
+    ) -> Option<(u16, Vec<LineRec>)> {
+        let (id, mut recs) = self.push_source(path, &lines.join("\n"), first_lineno)?;
+        while recs.len() < lines.len() {
+            let lineno = first_lineno + recs.len() as u32;
+            let end = self.sources.text(id).len() as u32;
+            recs.push(LineRec::new(id, lineno, end, end, ""));
+        }
+        Some((id, recs))
+    }
+
+    /// [`Self::push_lines`] without docutils' `string2lines`: `lines` as
+    /// they are, tabs and trailing whitespace kept, as Sphinx inserts the
+    /// lines of `rst_prolog` and `rst_epilog` (`str.splitlines()`,
+    /// `SP/sphinx/util/rst.py:98`, `:114`). A line of spaces alone reads as
+    /// a blank line: the state machine's `blank` pattern (` *$`) matches
+    /// it, and its block readers, which strip a line to test it, end a
+    /// block at it.
+    fn push_raw_lines(
+        &mut self,
+        path: Arc<str>,
+        lines: &[&str],
+        first_lineno: u32,
+    ) -> Option<(u16, Vec<LineRec>)> {
+        let id = u16::try_from(self.sources.len()).ok()?;
+        let text = lines.join("\n");
+        let mut recs = Vec::with_capacity(lines.len());
+        let mut start = 0u32;
+        for (lineno, line) in (first_lineno..).zip(lines) {
+            let end = start + line.len() as u32;
+            recs.push(if line.bytes().all(|byte| byte == b' ') {
+                LineRec::new(id, lineno, start, start, "")
+            } else {
+                LineRec::new(id, lineno, start, end, line)
+            });
+            start = end + 1;
+        }
+        self.sources.push(Arc::clone(&path), Arc::from(text))?;
+        // The reporter's copy of the paths (`ParseOnlyState::sources`).
+        self.state.parse.sources.push(path);
+        debug_assert_eq!(self.state.parse.sources.len(), self.sources.len());
+        Some((id, recs))
     }
 
     /// Process `text` into a new source-table entry named `path`; returns
@@ -1008,21 +1225,13 @@ impl BlockParser {
                 source_path,
                 first_lineno,
             } = segment;
-            let text = raw_lines.join("\n");
-            let Some((id, mut segment_recs)) =
-                self.push_source(Arc::from(source_path), &text, first_lineno)
+            // A segment's line count is authoritative — a padding segment
+            // IS one blank line ([`Self::push_lines`]).
+            let Some((_, segment_recs)) =
+                self.push_lines(Arc::from(source_path), &raw_lines, first_lineno)
             else {
                 break;
             };
-            // `Lines` never yields a line after the final newline (and an
-            // all-empty text yields none at all), but a segment's line
-            // count is authoritative — a padding segment IS one blank
-            // line. Restore trailing blanks as zero-width views.
-            while segment_recs.len() < raw_lines.len() {
-                let lineno = first_lineno + segment_recs.len() as u32;
-                let end = self.sources.text(id).len() as u32;
-                segment_recs.push(LineRec::new(id, lineno, end, end, ""));
-            }
             recs.extend(segment_recs);
         }
         let at = at.min(lines.len());
@@ -1172,6 +1381,21 @@ impl BlockParser {
         }
     }
 
+    /// docutils appends a bullet, enumerated or field list to its parent
+    /// before it parses the list's first item
+    /// (`SP/docutils/parsers/rst/states.py:1377`, `:1415`, `:1567`), and an
+    /// option or definition list once it has parsed the first (`:1626`,
+    /// `:2867`). A list the document loop parses outside any section is
+    /// then the document's child, after the nodes the construct appended
+    /// before it (`out`), so a `meta`, `header` or `footer` directive in a
+    /// later item sees it ([`Self::root_seen`]). A no-op in a nested parse
+    /// and in a section.
+    fn note_list_attached(&mut self, out: &[Node]) {
+        if self.depth == 0 && self.open_sections == 0 {
+            self.root_seen += out.len() + 1;
+        }
+    }
+
     /// docutils' `reporter.get_source_and_line(None)` during the parse:
     /// the top-level machine's position ([`Self::machine_position`]), or
     /// `fallback` in a parse that has none. The top-level construct being
@@ -1245,6 +1469,11 @@ impl BlockParser {
             }
             let mut out = Vec::new();
             self.open_sections = stack.len();
+            // docutils attaches a top-level section to the document when it
+            // opens it, this parser when it closes it; a top-level list
+            // counts itself once docutils attaches it
+            // ([`Self::note_list_attached`]).
+            self.root_seen = root.children.len() + usize::from(!stack.is_empty());
             let line = lines[pos];
             let explicit = line.indent() == 0
                 && is_explicit_markup_start(line.slice(&self.sources.arc(line.source)));
@@ -1281,6 +1510,9 @@ impl BlockParser {
             self.raised.is_empty(),
             "a raised `only` outlived its section"
         );
+        // What `meta`, `title`, `header` and `footer` did to the document
+        // itself, before anything walks the finished tree.
+        std::mem::take(&mut self.effects).apply(&mut root);
         // The position follows the top-level input, where an include's
         // lines stand after the blank lines that follow the directive, not
         // the stream this loop read, where they stand before them.
@@ -2034,6 +2266,7 @@ impl BlockParser {
         let mut list = Node::elem(kinds::BULLET_LIST, Span::ZERO);
         list.set("bullet", AttrValue::Str(bullet.to_string()));
         let mut warn_line: Option<(u16, u32)> = None;
+        self.note_list_attached(out);
         loop {
             let item = self.parse_list_item(lines, pos, 1);
             list.children.push(item);
@@ -2161,6 +2394,7 @@ impl BlockParser {
         // Fixture-verified: once an item is auto (#), explicit successors
         // invalidate; bare successors ("2." with no text) never continue.
         let mut auto_mode = first.auto;
+        self.note_list_attached(out);
         loop {
             let item = self.parse_list_item(lines, pos, current.marker_chars);
             items.push(item);
@@ -2364,6 +2598,9 @@ impl BlockParser {
                         .unwrap_or(false)
             };
             if continues {
+                if dl.children.len() == 1 {
+                    self.note_list_attached(out);
+                }
                 *pos = p;
                 continue;
             }
@@ -3010,6 +3247,7 @@ impl BlockParser {
         let start = *pos;
         let mut fl = Node::elem(kinds::FIELD_LIST, Span::ZERO);
         let mut warn_line: Option<(u16, u32)> = None;
+        self.note_list_attached(out);
         loop {
             let line = lines[*pos];
             let line_text = self.sources.line_text(line);
@@ -3156,6 +3394,9 @@ impl BlockParser {
                 && option_group_marker(self.sources.line_text(lines[p])).is_some()
                 && self.option_item_viable(lines, p);
             if continues {
+                if ol.children.len() == 1 {
+                    self.note_list_attached(out);
+                }
                 *pos = p;
                 continue;
             }
@@ -4174,6 +4415,7 @@ impl BlockParser {
             content,
             content_lineno,
             current,
+            block_end: DocLoc::at(block_end.source, block_end.lineno),
             span,
             lineno,
             rawsource,
@@ -4212,7 +4454,7 @@ impl BlockParser {
             DirectiveKind::UnicodeDir => self.run_unicode(input, out),
             DirectiveKind::DateDir => self.run_date(input, out),
             DirectiveKind::Toctree => self.run_toctree(input, out),
-            DirectiveKind::VersionChange(info) => self.run_version_change(info, input, out),
+            DirectiveKind::VersionChange => self.run_version_change(input, out),
             DirectiveKind::SeeAlso => self.run_seealso(input, out),
             DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
             DirectiveKind::SphinxCode => self.run_sphinx_code(input, out),
@@ -4236,6 +4478,23 @@ impl BlockParser {
             }
             DirectiveKind::LiteralInclude => self.run_literalinclude(input, out),
             DirectiveKind::ProgramDir => self.run_program(input),
+            DirectiveKind::RoleDir => self.run_role(input, out),
+            DirectiveKind::Contents => self.run_contents(input, out),
+            DirectiveKind::SectNum => self.run_sectnum(input, out),
+            DirectiveKind::TargetNotes => self.run_target_notes(input, out),
+            DirectiveKind::Decoration(part) => self.run_decoration(part, input, out),
+            DirectiveKind::Meta => self.run_meta(input, out),
+            DirectiveKind::TitleDir => self.run_title(input),
+            DirectiveKind::TestDirective => self.run_test_directive(input, out),
+            DirectiveKind::DefaultRoleDir => self.run_default_role(input, out),
+            // `Author.run` returns nothing unless `show_authors` is on
+            // (`SP/sphinx/directives/other.py:197-198`), which this crate
+            // does not map: it is off.
+            DirectiveKind::Author => {}
+            DirectiveKind::TabularColumns => self.run_tabularcolumns(input, out),
+            DirectiveKind::Centered => self.run_centered(input, out),
+            DirectiveKind::Acks => self.run_acks(input, out),
+            DirectiveKind::ProductionList => self.run_productionlist(input, out),
             // `DefaultDomain.run` (`SP/sphinx/directives/__init__.py:353-366`):
             // `current_document.default_domain =
             // env.domains.get(argument.lower())`, so a name no domain is
@@ -4330,7 +4589,9 @@ impl BlockParser {
             if self.sphinx {
                 if let Some(srcdir) = &self.srcdir {
                     let resolved_srcdir = crate::utils::resolve_path(srcdir);
-                    if let Some(docname) = crate::utils::path2doc(io_path, &resolved_srcdir) {
+                    if let Some(docname) =
+                        crate::utils::path2doc(io_path, &resolved_srcdir, &self.read.source_suffix)
+                    {
                         self.state.parse.included_records.push(docname);
                     }
                 }
@@ -4845,6 +5106,7 @@ impl BlockParser {
             content: Vec::new(),
             content_lineno: input.content_lineno,
             current: input.current,
+            block_end: input.block_end,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -5197,6 +5459,235 @@ impl BlockParser {
         self.state.log_warning(message, location);
     }
 
+    /// The document's role registries ([`super::ParseOnlyState::roles`]).
+    fn role_table(&self) -> Arc<RoleTable> {
+        self.state
+            .parse
+            .roles
+            .clone()
+            .unwrap_or_else(|| RoleTable::builtin(self.sphinx))
+    }
+
+    /// The document's role registries, to change them: what a role
+    /// directive registers stays for the rest of the document, and for the
+    /// documents read after it (decision 14).
+    fn role_table_mut(&mut self) -> &mut RoleTable {
+        let sphinx = self.sphinx;
+        let roles = self
+            .state
+            .parse
+            .roles
+            .get_or_insert_with(|| RoleTable::builtin(sphinx));
+        Arc::make_mut(roles)
+    }
+
+    /// `roles.role(name, language, self.lineno, self.state.reporter)` as
+    /// a directive calls it — Sphinx's dispatcher in a Sphinx parse
+    /// ([`super::roles::resolve_role`]): the role, if any, and the INFO
+    /// docutils' lookup reported, at the directive's line.
+    fn lookup_role(&mut self, name: &str, source: u16, lineno: u32) -> (Option<RoleFn>, Vec<Node>) {
+        let table = self.role_table();
+        let ctx = DispatchCtx {
+            sphinx: self.sphinx,
+            default_domain: self.default_domain,
+            intersphinx: self.read.intersphinx,
+        };
+        let (role, info) = match super::roles::resolve_role(&table, &ctx, name, &mut self.state) {
+            Resolution::Found { role, info, .. } => (Some(role), info),
+            Resolution::NotFound { info } => (None, info),
+        };
+        let messages = info
+            .map(|info| self.msg(messages::INFO, &info, source, lineno))
+            .into_iter()
+            .collect();
+        (role, messages)
+    }
+
+    /// docutils' `Role.run` (`SP/docutils/parsers/rst/directives/misc.py:472-531`):
+    /// `.. role:: name` or `.. role:: name(base)` as the first line of its
+    /// content, on the directive's line or the one below, registers a
+    /// custom role ([`CustomRole`]) under `name`, which
+    /// calls `base` — looked up like any role name — or
+    /// `generic_custom_role`, with the options the lines below give,
+    /// parsed against what the base admits ([`RoleOptionSpec`]), and the
+    /// new name as its class unless they give one ([RC §3.15]). The
+    /// registration stays for the rest of the build (decision 14).
+    fn run_role(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let (source, lineno, name) = (input.span.source, input.lineno, input.name);
+        // `self.content_offset > self.lineno`: the content's 0-based
+        // offset against the directive's 1-based line, so content that
+        // starts two or more lines below the directive line.
+        if input.content.is_empty() || input.content_lineno > lineno + 1 {
+            out.push(self.directive_run_error(
+                &format!("\"{name}\" directive requires arguments on the first line."),
+                source,
+                lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let args = self.sources.line_text(input.content[0]).to_string();
+        let Some((new_name, base_name)) = role_arguments(&args) else {
+            out.push(self.directive_run_error(
+                &format!("\"{name}\" directive arguments not valid role names: \"{args}\"."),
+                source,
+                lineno,
+                input.rawsource,
+            ));
+            return;
+        };
+        let base = match base_name {
+            Some(base_name) => {
+                let (role, messages) = self.lookup_role(&base_name, source, lineno);
+                out.extend(messages);
+                match role {
+                    Some(role) => role,
+                    None => {
+                        out.push(self.directive_block_message(
+                            messages::ERROR,
+                            &format!("Unknown interpreted text role \"{base_name}\"."),
+                            source,
+                            lineno,
+                            input.rawsource,
+                        ));
+                        return;
+                    }
+                }
+            }
+            None => RoleFn::GenericCustom,
+        };
+        let mut options =
+            match self.role_directive_options(&input.content[1..], RoleOptionSpec::of(&base)) {
+                Ok(options) => options,
+                Err(detail) => {
+                    out.push(self.directive_block_message(
+                        messages::ERROR,
+                        &format!("Error in \"{name}\" directive:\n{detail}."),
+                        source,
+                        lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            };
+        if options.classes.is_none() {
+            match super::roles::custom::class_option(&new_name) {
+                Ok(classes) => options.classes = Some(classes),
+                Err(detail) => {
+                    out.push(self.directive_block_message(
+                        messages::ERROR,
+                        &format!("Invalid argument for \"{name}\" directive:\n{detail}."),
+                        source,
+                        lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+        let role = CustomRole {
+            name: new_name.clone(),
+            base,
+            options,
+        };
+        self.role_table_mut()
+            .register_local(&new_name, RoleFn::Custom(Arc::new(role)));
+    }
+
+    /// `parse_directive_block(self.content[1:], self.content_offset,
+    /// convert_directive_function(base_role), option_presets={})`
+    /// (`states.py:2301-2345`) for a role directive: the lines after its
+    /// first are an option block against `spec`, and nothing else — no
+    /// base role admits content, so any other line is `no content
+    /// permitted`; with no option spec at all, every line is content.
+    fn role_directive_options(
+        &mut self,
+        lines: &[LineRec],
+        spec: RoleOptionSpec,
+    ) -> Result<RoleOptions, String> {
+        const CLASS: &[(&str, Conv)] = &[("class", Conv::ClassOption)];
+        const CLASS_LANGUAGE: &[(&str, Conv)] =
+            &[("class", Conv::ClassOption), ("language", Conv::Unchanged)];
+        const FORMAT_CLASS: &[(&str, Conv)] =
+            &[("format", Conv::Unchanged), ("class", Conv::ClassOption)];
+        let mut indented: Vec<LineRec> = lines.to_vec();
+        if indented.first().is_some_and(|line| line.is_blank()) {
+            indented.remove(0);
+        }
+        while indented.last().is_some_and(|line| line.is_blank()) {
+            indented.pop();
+        }
+        let option_spec = match spec {
+            _ if indented.is_empty() => return Ok(RoleOptions::default()),
+            RoleOptionSpec::None => return Err("no content permitted".to_string()),
+            RoleOptionSpec::Class => CLASS,
+            RoleOptionSpec::ClassLanguage => CLASS_LANGUAGE,
+            RoleOptionSpec::FormatClass => FORMAT_CLASS,
+        };
+        let blank = indented
+            .iter()
+            .position(|line| line.is_blank())
+            .unwrap_or(indented.len());
+        let mut arg_block = indented[..blank].to_vec();
+        let content = indented.get(blank + 1..).unwrap_or_default();
+        let mut options = RoleOptions::default();
+        if let Some(marker) = arg_block
+            .iter()
+            .position(|line| field_marker(self.sources.line_text(*line)).is_some())
+        {
+            let opt_block = arg_block.split_off(marker);
+            for (option, value) in parse_extension_options(&self.sources, &opt_block, option_spec)?
+            {
+                match (option.as_str(), value) {
+                    ("class", OptVal::StrList(classes)) => options.classes = Some(classes),
+                    ("language", OptVal::Str(language)) => options.language = Some(language),
+                    ("format", OptVal::Str(format)) => options.format = Some(format),
+                    _ => {}
+                }
+            }
+        }
+        // The lines before the options and after the blank line are the
+        // content no role admits (`arg_block + indented[i:]`).
+        if !arg_block.is_empty() || content.iter().any(|line| !line.is_blank()) {
+            return Err("no content permitted".to_string());
+        }
+        Ok(options)
+    }
+
+    /// `.. default-role::` (docutils' `DefaultRole.run`, `misc.py:534-555`;
+    /// Sphinx's, `SP/sphinx/directives/__init__.py:317-350`): with no
+    /// argument, `''` leaves the registry, and bare interpreted text is
+    /// `title_reference` again; otherwise the role the argument names,
+    /// looked up like any role name, becomes `''`, which, without
+    /// `default_role` set, stays for the documents read after this one
+    /// (decision 14). Sphinx also makes the name the document's default
+    /// role (`current_document.default_role`), which a Sphinx role called
+    /// as the default role takes as its name ([RC §4.2]).
+    fn run_default_role(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let (source, lineno) = (input.span.source, input.lineno);
+        let Some(role_name) = input.arguments.first() else {
+            self.role_table_mut().set_default(None);
+            return;
+        };
+        let (role, messages) = self.lookup_role(role_name, source, lineno);
+        out.extend(messages);
+        match role {
+            Some(role) => {
+                self.role_table_mut().set_default(Some(role));
+                if self.sphinx {
+                    self.state.parse.default_role = Some(role_name.clone());
+                }
+            }
+            None => out.push(self.directive_block_message(
+                messages::ERROR,
+                &format!("Unknown interpreted text role \"{role_name}\"."),
+                source,
+                lineno,
+                input.rawsource,
+            )),
+        }
+    }
+
     /// `.. program::` (`domains/std/__init__.py:333-348`): pure
     /// `env.ref_context` state, no nodes. The literal argument `None` pops
     /// the scope rather than naming a program called "None".
@@ -5215,12 +5706,12 @@ impl BlockParser {
     /// Sphinx's math directive (`MathDirective`,
     /// `SP/sphinx/directives/patches.py:137-200`). The label is the
     /// `:label:` option's, else the `:name:` option's; an empty one is
-    /// numbered automatically, `<docname>:<n>` (`math_number_all`, which
-    /// would number an unlabelled equation too, is off by default and not
-    /// configurable here). A label registers the equation with the math
-    /// domain, which gives it its number ([`Self::note_equation`]), and the
-    /// equation's target `equation-<label>`. Absent, the label and number
-    /// are Python `None`, which pformat prints `"True"`.
+    /// numbered automatically, `<docname>:<n>`, and with `math_number_all`
+    /// so is an equation with none. A label registers the equation with
+    /// the math domain, which gives it its number
+    /// ([`Self::note_equation`]), and the equation's target
+    /// `equation-<label>`. Absent, the label and number are Python `None`,
+    /// which pformat prints `"True"`.
     ///
     /// The nodes are the post-read shape: `PropagateTargets` (260) has the
     /// target's id moved onto the block and the target refer to it, which
@@ -5257,10 +5748,12 @@ impl BlockParser {
         // equation's, which `PropagateTargets` appends (`docutils-0514`).
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
-        // `if node['label'] == '': node['label'] = f'{docname}:{seq}'`,
-        // numbered by its own serial.
+        // `if node['label'] == '' or (self.config.math_number_all and not
+        // node['label']): node['label'] = f'{docname}:{seq}'`, numbered by
+        // its own serial.
+        let unlabelled = label.as_deref().is_none_or(str::is_empty);
         let label = match label {
-            Some(label) if label.is_empty() => {
+            _ if unlabelled && (label.is_some() || self.read.math_number_all) => {
                 let serial = self.state.new_serialno("sphinx.ext.math#equations");
                 Some(format!("{}:{serial}", self.docname))
             }
@@ -5372,6 +5865,18 @@ impl BlockParser {
             if line.is_empty() {
                 continue;
             }
+            // `process_index_entry` raises `ValueError` for an entry type
+            // it no longer supports, out of the directive: Sphinx 9.1.0
+            // crashes there (decision 13), as for the `index` role.
+            if let Some(message) = super::roles::sphinx::removed_index_entry(line) {
+                let location = super::LogLocation::Node {
+                    source: input.span.source,
+                    line: input.lineno,
+                };
+                let crash = super::SphinxCrash::python("ValueError", message, location);
+                self.state.raise(crash, 0, 0);
+                return;
+            }
             entries.extend(process_index_entry(line, &target_id));
         }
         let mut index = Node::elem("index", input.span);
@@ -5381,24 +5886,45 @@ impl BlockParser {
         out.push(target);
     }
 
+    /// `children = self.parse_content_to_nodes()` for a Sphinx directive
+    /// whose content must be one bullet list, `hlist`'s or `acks`'s
+    /// (`SP/sphinx/directives/other.py:289-295`, `:266-272`): the list, and
+    /// the machine's position after the content. Anything else is
+    /// `logger.warning(__('.. <directive> content is not a list'),
+    /// location=(docname, self.lineno))`, which goes to the log stream, not
+    /// the tree, at the directive's raw line ([RC §4.1]); the directive
+    /// returns nothing, the parsed content dropped and its registrations
+    /// kept.
+    fn content_bullet_list(
+        &mut self,
+        directive: &str,
+        input: &DirectiveInput<'_>,
+    ) -> Option<(Node, DocLoc)> {
+        let mut children = self.parse_nested_attached(&input.content, "element");
+        let current = current_after(&input.content, self.ending);
+        if children.len() == 1 && children[0].kind == kinds::BULLET_LIST {
+            return children.pop().map(|list| (list, current));
+        }
+        let line = self.abs_line_number(input.span.source, input.lineno);
+        self.state.log_warning(
+            format!(".. {directive} content is not a list"),
+            super::LogLocation::DocLine(line),
+        );
+        self.state.detach(children);
+        None
+    }
+
     /// sphinx hlist (other.py HList): content must be exactly one bullet
-    /// list; distributed into ncolumns hlistcol children.
+    /// list ([`Self::content_bullet_list`]); distributed into ncolumns
+    /// hlistcol children.
     fn run_hlist(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let ncolumns = match opt_get(&input.options, "columns") {
             Some(OptVal::Int(n)) if *n > 0 => *n as usize,
             _ => 2,
         };
-        let children = self.parse_nested_attached(&input.content, "element");
-        let current = current_after(&input.content, self.ending);
-        let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
-        if !one_list {
-            // logger.warning('.. hlist content is not a list') goes to the
-            // log stream, not the tree; `return []` drops the parsed
-            // content, its registrations kept.
-            self.state.detach(children);
+        let Some((list, current)) = self.content_bullet_list("hlist", &input) else {
             return;
-        }
-        let list = children.into_iter().next().expect("length checked");
+        };
         let items = list.children;
         let npercol = items.len() / ncolumns;
         let nmore = items.len() % ncolumns;
@@ -5421,6 +5947,183 @@ impl BlockParser {
         // The `hlist` has no location of its own ([`Self::note_appended_location`]).
         self.note_appended_location(&mut hlist, current);
         out.push(hlist);
+    }
+
+    /// Sphinx's `Acks` (`SP/sphinx/directives/other.py:256-273`): an `acks`
+    /// holding the content, which must be one bullet list
+    /// ([`Self::content_bullet_list`]).
+    fn run_acks(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let Some((list, current)) = self.content_bullet_list("acks", &input) else {
+            return;
+        };
+        let mut acks = Node::elem("acks", input.span);
+        acks.children.push(list);
+        // `addnodes.acks('', *children)` has no location of its own
+        // ([`Self::note_appended_location`]).
+        self.note_appended_location(&mut acks, current);
+        out.push(acks);
+    }
+
+    /// Sphinx's `TabularColumns` (`SP/sphinx/directives/other.py:228-232`):
+    /// a `tabular_col_spec` whose `spec` is the argument, at the
+    /// directive's location (`set_source_info`).
+    fn run_tabularcolumns(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let mut node = Node::elem("tabular_col_spec", input.span);
+        node.set("spec", AttrValue::Str(input.arguments[0].clone()));
+        out.push(node);
+    }
+
+    /// Sphinx's `Centered` (`SP/sphinx/directives/other.py:244-253`): a
+    /// `centered` holding the argument, inline-parsed at the directive's
+    /// line (`parse_inline`), and the messages that raises after it.
+    fn run_centered(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let inline = self.inline(&input.arguments[0], input.span, input.lineno);
+        let mut centered = Node::elem("centered", input.span);
+        centered.children = inline.nodes;
+        // `addnodes.centered()` has no location of its own
+        // ([`Self::note_appended_location`]).
+        self.note_appended_location(&mut centered, input.current);
+        out.push(centered);
+        out.extend(inline.messages);
+    }
+
+    /// The std domain's `ProductionList.run`
+    /// (`SP/sphinx/domains/std/__init__.py:607-631`): the argument, its
+    /// backslash-newlines removed, split into lines; a first line without
+    /// a colon names the production group; each line after it up to the
+    /// first without a colon is a production, `name: tokens`. Each becomes
+    /// a `production`: a named one opens with its name as a target
+    /// ([`Self::production_name_target`]), then the name padded to the
+    /// longest name, `::=`, its tokens ([`token_xrefs`]) and a newline.
+    /// No production at all leaves `max()` an empty sequence: Sphinx 9.1.0
+    /// crashes (`ValueError`, decision 13).
+    fn run_productionlist(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let text = input.arguments[0].replace("\\\n", "");
+        let mut lines = crate::utils::py_splitlines(&text);
+        let group = match lines.first() {
+            Some(first) if !first.contains(':') => {
+                let group = first.trim_matches(crate::utils::py_isspace).to_string();
+                lines.remove(0);
+                group
+            }
+            _ => String::new(),
+        };
+        let productions: Vec<(&str, &str, &str)> = lines
+            .iter()
+            .map_while(|&line| {
+                let (name, tokens) = line.split_once(':')?;
+                Some((
+                    line,
+                    name.trim_matches(crate::utils::py_isspace),
+                    tokens.trim_matches(crate::utils::py_isspace),
+                ))
+            })
+            .collect();
+        let Some(max_len) = productions
+            .iter()
+            .map(|(_, name, _)| name.chars().count())
+            .max()
+        else {
+            let location = super::LogLocation::Node {
+                source: input.span.source,
+                line: input.lineno,
+            };
+            let crash = super::SphinxCrash::python(
+                "ValueError",
+                "max() iterable argument is empty".to_string(),
+                location,
+            );
+            self.state.raise(crash, 0, 0);
+            return;
+        };
+        let span = input.span;
+        let mut list = Node::elem("productionlist", span);
+        for (rule, name, tokens) in productions {
+            let mut production = Node::elem("production", span);
+            production.set_rawsource(rule);
+            production.set("tokenname", AttrValue::Str(name.to_string()));
+            production.set("xml:space", AttrValue::Str("preserve".to_string()));
+            // `separator_node`: `' ::= '.rjust(max_len - len(name) + 5)`,
+            // or blanks as wide for a production without a name.
+            let separator = if name.is_empty() {
+                " ".repeat(max_len + 5)
+            } else {
+                let width = max_len - name.chars().count() + 5;
+                format!("{:>width$}", " ::= ")
+            };
+            if !name.is_empty() {
+                let Some(target) = self.production_name_target(name, &group, &input) else {
+                    return;
+                };
+                production.children.push(target);
+            }
+            production.children.push(Node::text_node(&separator, span));
+            production
+                .children
+                .extend(token_xrefs(tokens, &group, span));
+            production.children.push(Node::text_node("\n", span));
+            list.children.push(production);
+        }
+        out.push(list);
+    }
+
+    /// `ProductionList.make_name_target` (`SP/sphinx/domains/std/__init__.py:677-693`):
+    /// the production's name, a `literal_strong` whose id `make_id` makes
+    /// with the prefix `grammar-token-<group>` and which
+    /// `note_implicit_target` registers, and the name, `<group>:<name>`
+    /// in a group, noted as a std `token` object, which the environment
+    /// replays ([`super::ObjectRegistration`]). Its location is the
+    /// directive's (`self.get_location()`), the one every production of
+    /// the list shares.
+    ///
+    /// `None` when `make_id` raises, at a `%` the group does not double
+    /// (`(prefix + '-%s') % name`): Sphinx 9.1.0 crashes there, at the
+    /// list's first named production (decision 13), and the crash, at the
+    /// directive, is raised.
+    fn production_name_target(
+        &mut self,
+        name: &str,
+        group: &str,
+        input: &DirectiveInput<'_>,
+    ) -> Option<Node> {
+        let mut node = Node::elem("literal_strong", input.span);
+        node.set_rawsource(name);
+        node.children.push(Node::text_node(name, input.span));
+        let node_id = match self
+            .state
+            .sphinx_make_id(&format!("grammar-token-{group}"), name)
+        {
+            Ok(node_id) => node_id,
+            Err(crash) => {
+                let location = super::LogLocation::Node {
+                    source: input.span.source,
+                    line: input.lineno,
+                };
+                self.state
+                    .raise(super::SphinxCrash { location, ..crash }, 0, 0);
+                return None;
+            }
+        };
+        node.attrs.ids.push(node_id.clone());
+        self.state.ids.register(&node_id, None);
+        let name = if group.is_empty() {
+            name.to_string()
+        } else {
+            format!("{group}:{name}")
+        };
+        let seq = self.state.draw_seq();
+        self.state
+            .parse
+            .std_object_records
+            .push(super::ObjectRegistration {
+                source: input.span.source,
+                objtype: "token".to_string(),
+                name,
+                node_id,
+                line: input.lineno,
+                seq,
+            });
+        Some(node)
     }
 
     /// sphinx glossary (std domain): term lines + indented definitions;
@@ -5605,7 +6308,10 @@ impl BlockParser {
                 // `make_id(env, document, 'term', termtext)` — sphinx's
                 // case-preserving `_make_id` fork, with a `term`-keyed
                 // serial fallback of its own, then `note_explicit_target`.
-                let node_id = self.state.sphinx_make_id("term", &term_text);
+                let node_id = self
+                    .state
+                    .sphinx_make_id("term", &term_text)
+                    .expect("a prefix without '%' formats");
                 self.state.ids.register(&node_id, None);
                 term.attrs.ids.push(node_id.clone());
                 // `std._note_term(termtext, node_id, location=term)`.
@@ -5639,10 +6345,13 @@ impl BlockParser {
             let mut definition = Node::elem(kinds::DEFINITION, input.span);
             // `Glossary.run` copies each definition into a `StringList` of
             // its own, numbered from its first line's offset in its file
-            // ([`Self::definition_bias_base`]).
+            // ([`Self::definition_bias_base`]), and parses it into the
+            // anonymous `Element` of `nested_parse_to_nodes`
+            // (`SP/sphinx/domains/std/__init__.py:541`), not into the
+            // `definition` it then wraps the nodes in.
             let saved_base = self.definition_bias_base.replace(self.line_bias);
             definition.children =
-                self.parse_disconnected(|me| me.parse_nested_attached(&def_lines, "definition"));
+                self.parse_disconnected(|me| me.parse_nested_attached(&def_lines, "element"));
             self.definition_bias_base = saved_base;
             item.children.push(definition);
             dl.children.push(item);
@@ -6016,8 +6725,20 @@ impl BlockParser {
                     if !optname.starts_with(['-', '/']) {
                         prefix.push_str("-arg");
                     }
-                    let node_id = self.state.sphinx_make_id(&prefix, optname);
-                    signode.attrs.ids.push(node_id);
+                    // `make_id` raises at a `%` the program name does not
+                    // double: Sphinx 9.1.0 crashes there (decision 13).
+                    match self.state.sphinx_make_id(&prefix, optname) {
+                        Ok(node_id) => signode.attrs.ids.push(node_id),
+                        Err(crash) => {
+                            let location = super::LogLocation::Node {
+                                source: input.span.source,
+                                line,
+                            };
+                            self.state
+                                .raise(super::SphinxCrash { location, ..crash }, 0, 0);
+                            return;
+                        }
+                    }
                 }
                 // `note_explicit_target` runs once, AFTER every id is
                 // chosen, so the ids of one signature never see each other
@@ -6066,8 +6787,12 @@ impl BlockParser {
         line: u32,
         signode: &mut Node,
     ) -> String {
-        // Both callers pass `self.objtype` as the make_id prefix.
-        let node_id = self.state.sphinx_make_id(objtype, name);
+        // Both callers pass `self.objtype` as the make_id prefix: a
+        // directive's name, which holds no `%`.
+        let node_id = self
+            .state
+            .sphinx_make_id(objtype, name)
+            .expect("a prefix without '%' formats");
         signode.attrs.ids.push(node_id.clone());
         self.state.ids.register(&node_id, None);
         let seq = self.state.draw_seq();
@@ -6416,7 +7141,10 @@ impl BlockParser {
         };
         // Empty prefix: the id IS the fullname, `id{n}` on collision
         // ([PY §1.5], the empty-prefix branch of `sphinx_make_id`).
-        let node_id = self.state.sphinx_make_id("", &fullname);
+        let node_id = self
+            .state
+            .sphinx_make_id("", &fullname)
+            .expect("an empty prefix formats nothing");
         signode.attrs.ids.push(node_id.clone());
         self.state.ids.register(&node_id, None);
         let seq = self.state.draw_seq();
@@ -6602,7 +7330,10 @@ impl BlockParser {
         // the directive's own nodes, after the index and target.
         let (content, _) = self.parse_nested_titled(&input.content, "py_module");
         if !no_index {
-            let node_id = self.state.sphinx_make_id("module", &modname);
+            let node_id = self
+                .state
+                .sphinx_make_id("module", &modname)
+                .expect("a prefix without '%' formats");
             self.state.ids.register(&node_id, None);
             let mut target = Node::elem(kinds::TARGET, input.span);
             target.attrs.ids.push(node_id.clone());
@@ -6706,58 +7437,109 @@ impl BlockParser {
         }
     }
 
-    /// versionadded family (sphinx/domains/changeset.py VersionChange):
-    /// a versionmodified node holding ONE translatable="0" paragraph whose
-    /// lead-in inline ends with '.' (no text) or ': ' (text follows as
-    /// siblings in the same paragraph).
-    fn run_version_change(
-        &mut self,
-        info: &'static (&'static str, &'static str, &'static str),
-        input: DirectiveInput<'_>,
-        out: &mut Vec<Node>,
-    ) {
-        let (type_name, label, lead_fmt) = *info;
+    /// Sphinx's `VersionChange.run` (`SP/sphinx/domains/changeset.py:64-122`),
+    /// behind `versionadded`, `versionchanged`, `deprecated` and
+    /// `versionremoved` and their hyphenated spellings (`version-added`, …),
+    /// whose type is the unhyphenated name: a `versionmodified` node
+    /// holding a paragraph of the text on the directive line, if any, and
+    /// then the content, nested-parsed whether or not that text is there.
+    /// The first child, if a paragraph, opens with the label (`'<label>:
+    /// '`); if not, a paragraph of the label goes in front, `'<label>.'`
+    /// when there is nothing at all.
+    ///
+    /// The type comes from the name as written, which only the lowercase
+    /// spellings give a label: Sphinx 9.1.0 crashes on any other
+    /// (`KeyError`, decision 13), before the content is parsed.
+    fn run_version_change(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let Some((type_name, label, lead_fmt)) = version_change_type(input.name) else {
+            let location = super::LogLocation::Node {
+                source: input.span.source,
+                line: input.lineno,
+            };
+            let crash = super::SphinxCrash::python(
+                "KeyError",
+                crate::utils::py_repr_str(input.name),
+                location,
+            );
+            self.state.raise(crash, 0, 0);
+            return;
+        };
         let version = &input.arguments[0];
-        // Inline messages from the explanation must anchor on the text's
-        // own line, not the directive marker (review finding 41).
-        let mut text_lineno = input.lineno;
-        let text: Option<String> = input
-            .arguments
-            .get(1)
-            .cloned()
-            .or_else(|| {
-                if input.content.is_empty() {
-                    None
-                } else {
-                    text_lineno = input.content[0].lineno;
-                    Some(self.join_lines(&input.content))
-                }
-            })
-            .filter(|t| !t.is_empty());
         let mut node = Node::elem("versionmodified", input.span);
         node.set("type", AttrValue::Str(type_name.to_string()));
         node.set("version", AttrValue::Str(version.clone()));
-        let lead_base = lead_fmt.replace("{}", version);
-        let lead = match &text {
-            Some(_) => format!("{lead_base}: "),
-            None => format!("{lead_base}."),
-        };
-        let mut para = Node::elem(kinds::PARAGRAPH, input.span);
-        para.set("translatable", AttrValue::Int(0));
-        let mut inner = Node::elem("inline", input.span);
-        inner
-            .attrs
-            .classes
-            .extend(["versionmodified".to_string(), label.to_string()]);
-        inner.children.push(Node::text_node(lead, input.span));
-        para.children.push(inner);
+        // `arguments[1]`, inline-parsed at the line below the directive's
+        // (`parse_inline(..., lineno=self.lineno + 1)`) into a paragraph at
+        // the directive's line; its messages follow the node.
         let mut messages = Vec::new();
-        if let Some(t) = text {
-            let inline = self.inline(&t, input.span, text_lineno);
-            para.children.extend(inline.nodes);
+        if let Some(argument) = input.arguments.get(1) {
+            let inline = self.inline(argument, input.span, input.lineno + 1);
+            let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+            para.children = inline.nodes;
+            node.children.push(para);
             messages = inline.messages;
         }
-        node.children.push(para);
+        // `parse_content_to_nodes()`: a nested parse into an anonymous
+        // `Element` that has `document` set (`SP/sphinx/util/parsing.py:62-71`),
+        // no section titles. `node` has `document` set too
+        // (`changeset.py:67`), so a paragraph put into it below takes the
+        // machine's position from `setup_child`.
+        let current = if input.content.is_empty() {
+            input.current
+        } else {
+            let content = self.parse_nested_attached(&input.content, "element");
+            node.children.extend(content);
+            current_after(&input.content, self.ending)
+        };
+        let lead = |suffix: &str| {
+            let mut inline = Node::elem("inline", input.span);
+            inline
+                .attrs
+                .classes
+                .extend(["versionmodified".to_string(), label.to_string()]);
+            let text = format!("{}{suffix}", lead_fmt.replace("{}", version));
+            inline.children.push(Node::text_node(text, input.span));
+            inline
+        };
+        match node.children.first_mut() {
+            Some(first) if first.kind == kinds::PARAGRAPH => {
+                // Sphinx moves the paragraph's children into an `inline`
+                // that has the paragraph's location and is translatable,
+                // in a new paragraph (`translatable=False`) that
+                // `replace_self` gives the old one's ids, classes, names
+                // and dupnames and no other attribute
+                // (`SP/docutils/nodes.py:1110-1132`); RemoveTranslatableInline
+                // (999) dissolves the inline again. This parse makes what
+                // is left. Every paragraph docutils parses has the
+                // rawsource that Sphinx's condition reads. The paragraph
+                // keeps its own location, the one that inline hands to the
+                // nodes it holds while the read transforms locate them.
+                let Attrs {
+                    ids,
+                    names,
+                    dupnames,
+                    classes,
+                    ..
+                } = std::mem::take(&mut first.attrs);
+                first.attrs = Attrs {
+                    ids,
+                    names,
+                    dupnames,
+                    classes,
+                    ..Attrs::default()
+                };
+                first.set("translatable", AttrValue::Int(0));
+                first.children.insert(0, lead(": "));
+            }
+            first => {
+                let suffix = if first.is_some() { ": " } else { "." };
+                let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+                para.set("translatable", AttrValue::Int(0));
+                para.children.push(lead(suffix));
+                self.note_location(&mut para, current);
+                node.children.insert(0, para);
+            }
+        }
         out.push(node);
         out.extend(messages);
     }
@@ -7084,6 +7866,8 @@ impl BlockParser {
         // (`found_docs: None`) resolves nothing and leaves both empty.
         let mut resolved = match &self.found_docs {
             Some(found) => {
+                let source_suffixes: Vec<&str> =
+                    self.read.source_suffix.iter().map(String::as_str).collect();
                 crate::env::toctree::resolve_entries(&crate::env::toctree::ToctreeContent {
                     content: &raw_entries,
                     docname: &self.docname,
@@ -7092,7 +7876,7 @@ impl BlockParser {
                     source: input.span.source,
                     line: input.lineno,
                     found_docs: found,
-                    source_suffixes: SOURCE_SUFFIXES,
+                    source_suffixes: &source_suffixes,
                     exclude_patterns: &self.exclude_patterns,
                 })
             }
@@ -7115,6 +7899,9 @@ impl BlockParser {
             line: input.lineno,
             warnings: resolved.warnings.clone(),
         });
+        // `rawentries` and `rawcaption` are no attributes of the directive's
+        // node: `PreserveTranslatableMessages` (010-034) sets them in the
+        // read ([`crate::transforms::sphinx::PreserveTranslatableMessages`]).
         let mut toctree = Node::elem("toctree", input.span);
         match caption {
             // pformat renders a Python None attr value as "True".
@@ -7150,7 +7937,6 @@ impl BlockParser {
         };
         toctree.set("numbered", AttrValue::Int(numbered));
         toctree.set("parent", AttrValue::Str(self.docname.clone()));
-        toctree.set("rawentries", AttrValue::Str(String::new()));
         toctree.set(
             "titlesonly",
             AttrValue::Int(i64::from(opt_get(&input.options, "titlesonly").is_some())),
@@ -7203,9 +7989,13 @@ impl BlockParser {
         }
         // The nested parse runs OUTSIDE the SubstitutionDef state: an
         // embedded `.. date::` inside replace content must context-error
-        // exactly like at body level (review finding 22).
+        // exactly like at body level (review finding 22). Its container is
+        // the anonymous `nodes.Element(text)`, not the definition, so a
+        // topic, a sidebar or a contents directive runs there
+        // ([`pseudo_section_parent_invalid`]) before the content is
+        // rejected below.
         let saved_ctx = self.substitution_ctx.take();
-        let children = self.parse_nested(&input.content, "substitution_definition");
+        let children = self.parse_nested(&input.content, "element");
         self.substitution_ctx = saved_ctx;
         let paragraphs = children
             .iter()
@@ -7902,6 +8692,22 @@ impl BlockParser {
         table
     }
 
+    /// The `DirectiveError` of a topic, sidebar or contents directive whose
+    /// container may not hold one ([`pseudo_section_parent_invalid`]):
+    /// `The "<name>" directive may not be used within topics or body
+    /// elements.` (`body.py:42-47`, `parts.py:47-52`).
+    fn pseudo_section_context_error(&mut self, input: &DirectiveInput<'_>) -> Node {
+        self.directive_run_error(
+            &format!(
+                "The \"{}\" directive may not be used within topics or body elements.",
+                input.name
+            ),
+            input.span.source,
+            input.lineno,
+            input.rawsource,
+        )
+    }
+
     /// topic + sidebar (body.py BasePseudoSection:21-96).
     fn run_pseudo_section(
         &mut self,
@@ -7934,21 +8740,9 @@ impl BlockParser {
                 return;
             }
         }
-        // BasePseudoSection context check: allowed parents are the document
-        // root, sections, and sidebars (body.py:33-40).
-        if let Some(parent) = self.nested_node_kind {
-            if parent != "sidebar" {
-                out.push(self.directive_run_error(
-                    &format!(
-                        "The \"{}\" directive may not be used within topics or body elements.",
-                        input.name
-                    ),
-                    input.span.source,
-                    input.lineno,
-                    input.rawsource,
-                ));
-                return;
-            }
+        if pseudo_section_parent_invalid(self.nested_node_kind) {
+            out.push(self.pseudo_section_context_error(&input));
+            return;
         }
         if input.content.is_empty() {
             out.push(self.directive_content_error(
@@ -7983,6 +8777,418 @@ impl BlockParser {
         let content = self.parse_nested(&input.content, kind);
         node.children.extend(content);
         out.push(node);
+    }
+
+    /// contents (`SP/docutils/parsers/rst/directives/parts.py:46-87`): a
+    /// topic classed `contents` (then the `:class:` values, then `local`),
+    /// titled by the argument, by nothing with `:local:`, or by the
+    /// language's `contents` label; named by its title, or the label,
+    /// unless the document already has that name; registered as an
+    /// implicit target; holding a `pending` node for the Contents transform
+    /// (720) with the options as its details. The title's inline messages
+    /// follow the topic. The label is the English `Contents` whatever the
+    /// project's `language`: the other languages' labels are not ported.
+    fn run_contents(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        if pseudo_section_parent_invalid(self.nested_node_kind) {
+            out.push(self.pseudo_section_context_error(&input));
+            return;
+        }
+        let local = opt_get(&input.options, "local").is_some();
+        let mut messages = Vec::new();
+        let title = match input.arguments.first() {
+            Some(text) => {
+                let inline = self.inline(text, input.span, input.lineno);
+                messages = inline.messages;
+                // `nodes.title(title_text, '', *text_nodes)`.
+                let mut title = Node::elem(kinds::TITLE, input.span);
+                title.children = inline.nodes;
+                title.set_rawsource(text);
+                Some(title)
+            }
+            None if local => None,
+            None => {
+                let mut title = Node::elem(kinds::TITLE, input.span);
+                title
+                    .children
+                    .push(Node::text_node(CONTENTS_LABEL, input.span));
+                Some(title)
+            }
+        };
+        let mut topic = Node::elem("topic", input.span);
+        topic.attrs.classes.push("contents".to_string());
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            topic.attrs.classes.extend(classes.iter().cloned());
+        }
+        if local {
+            topic.attrs.classes.push("local".to_string());
+        }
+        // `topic.source, topic.line = get_source_and_line(); topic.line -=
+        // 1`: the line before the one the machine that read the block
+        // stands on.
+        let loc = DocLoc {
+            line: input.block_end.line.map(|line| line.saturating_sub(1)),
+            ..input.block_end
+        };
+        let name = match title {
+            Some(title) => {
+                let name = title.astext();
+                topic.children.push(title);
+                name
+            }
+            None => CONTENTS_LABEL.to_string(),
+        };
+        let name = ids::fully_normalize_name(&name);
+        if !self.state.names.has_name(&name) {
+            topic.attrs.names.push(name);
+        }
+        // `note_implicit_target(topic)` with no `msgnode`: a duplicate's
+        // message is reported and placed nowhere.
+        drop(self.state.note_implicit_target(&mut topic, loc));
+        self.note_location(&mut topic, loc);
+        let details = pending_details(&input.options, |name, value| match (name, value) {
+            // `Contents.backlinks`: `none` is Python `None`.
+            ("backlinks", OptVal::Str(choice)) if choice == "none" => Some(PyValue::None),
+            _ => None,
+        });
+        // `nodes.pending(parts.Contents, rawsource=self.block_text)`,
+        // appended to a topic that has no `document`: no location.
+        let mut pending = self.note_pending(
+            PendingTransform::Contents,
+            details,
+            input.span,
+            input.rawsource,
+        );
+        self.note_location(&mut pending, DocLoc::default());
+        topic.children.push(pending);
+        out.push(topic);
+        out.extend(messages);
+    }
+
+    /// sectnum / section-numbering (`parts.py:99-103`): a `pending` node
+    /// for the SectNum transform (710), with the options as its details.
+    fn run_sectnum(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let details = pending_details(&input.options, |_, _| None);
+        let mut pending = self.note_pending(PendingTransform::SectNum, details, input.span, "");
+        self.note_returned_pending_location(&mut pending, input.current);
+        out.push(pending);
+    }
+
+    /// target-notes (`SP/docutils/parsers/rst/directives/references.py:23-28`):
+    /// a `pending` node for the TargetNotes transform (540), with the
+    /// options as its details. `add_name` finds no `name` option: the
+    /// option spec has none.
+    fn run_target_notes(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let details = pending_details(&input.options, |_, _| None);
+        let mut pending = self.note_pending(PendingTransform::TargetNotes, details, input.span, "");
+        self.note_returned_pending_location(&mut pending, input.current);
+        out.push(pending);
+    }
+
+    /// header / footer (`parts.py:106-129`): the content, nested-parsed
+    /// into the document's decoration's header or footer, which the first
+    /// such directive creates (`document.get_decoration()`,
+    /// `SP/docutils/nodes.py:2108-2116`) and every later one extends
+    /// (`get_header`, `get_footer`, `:1597-1605`). The directive returns
+    /// nothing. The decoration is attached before the content is parsed,
+    /// so the content is parsed attached, and a contents, topic or sidebar
+    /// directive in it is rejected (a header is decorative).
+    ///
+    /// A `header` directive in a header's own content fills the header it
+    /// is parsed into, after what the content parsed before it, as docutils
+    /// does; deeper in that content (in a note in the header, say), its
+    /// nodes are not interleaved with the enclosing header's as docutils
+    /// interleaves them, but go before them.
+    fn run_decoration(
+        &mut self,
+        part: DecorationPart,
+        input: DirectiveInput<'_>,
+        out: &mut Vec<Node>,
+    ) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(
+                input.name,
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        // `setup_child` stamps each with `document.current_line`, the last
+        // line of the directive's block, as the document takes it.
+        if self.effects.decoration.is_none() {
+            let mut decoration = Node::elem("decoration", Span::ZERO);
+            self.note_location(&mut decoration, input.current);
+            self.effects.decoration = Some(decoration);
+            self.effects.ops.push(HeadOp::CreateDecoration {
+                root_seen: self.root_seen,
+            });
+        }
+        let kind = part.kind();
+        let has_part = self
+            .effects
+            .decoration
+            .as_mut()
+            .is_some_and(|decoration| part.slot(decoration).is_some());
+        if !has_part {
+            let mut node = Node::elem(kind, Span::ZERO);
+            self.note_location(&mut node, input.current);
+            if let Some(decoration) = self.effects.decoration.as_mut() {
+                match part {
+                    DecorationPart::Header => decoration.children.insert(0, node),
+                    DecorationPart::Footer => decoration.children.push(node),
+                }
+            }
+        }
+        let nodes = self.parse_nested_attached(&input.content, kind);
+        if self.nested_node_kind == Some(kind) {
+            // In the content of the part it fills: the nodes join the
+            // content being parsed into that part, where they stand.
+            out.extend(nodes);
+            return;
+        }
+        if let Some(part_node) = self.effects.decoration.as_mut().and_then(|d| part.slot(d)) {
+            part_node.children.extend(nodes);
+        }
+    }
+
+    /// meta (`SP/docutils/parsers/rst/directives/misc.py:571-636`): the
+    /// content parsed by a state machine whose only state is `MetaBody`, a
+    /// field list each field of which is a `meta` node (or the message it
+    /// raises), then `Invalid meta directive.` when a line that is no field
+    /// marker stopped it; all of it inserted at the head of the document
+    /// ([`HeadOp::Insert`]). The directive returns nothing.
+    fn run_meta(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(
+                input.name,
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let content = &input.content;
+        let mut nodes = Vec::new();
+        let mut complete = true;
+        let mut at = 0;
+        while at < content.len() {
+            let line = content[at];
+            if line.is_blank() {
+                at += 1;
+                continue;
+            }
+            // Every transition but `field_marker` is `invalid_input`: the
+            // machine backs up and stops.
+            let text = self.sources.line_text(line);
+            let marker = if line.indent() == 0 {
+                field_marker(text)
+            } else {
+                None
+            };
+            let Some((name_raw, body_start)) = marker else {
+                complete = false;
+                break;
+            };
+            // `get_first_known_indented(match.end())`: the marker line's
+            // rest, then every line up to the next one that is neither
+            // blank nor indented, blank lines included.
+            let mut end = at + 1;
+            while content
+                .get(end)
+                .is_some_and(|line| line.is_blank() || line.indent() > 0)
+            {
+                end += 1;
+            }
+            let rest = text[body_start..].trim_start_matches(' ').to_string();
+            let mut body = vec![rest];
+            let indent = content[at + 1..end]
+                .iter()
+                .filter(|line| !line.is_blank())
+                .map(|line| line.indent())
+                .min()
+                .unwrap_or(0);
+            body.extend(content[at + 1..end].iter().map(|line| {
+                if line.is_blank() {
+                    String::new()
+                } else {
+                    self.sources.line_text(line.dedented(indent)).to_string()
+                }
+            }));
+            // The machine stops on the block's last line, which the
+            // messages quote.
+            let last = content[end - 1];
+            let machine_line = if last.is_blank() {
+                String::new()
+            } else {
+                self.sources.line_text(last).to_string()
+            };
+            let field = MetaField {
+                name_raw: &name_raw,
+                body,
+                machine_line,
+                line,
+            };
+            match self.parse_meta_field(field, &input) {
+                Some(node) => nodes.push(node),
+                // Sphinx 9.1.0 crashed: the parse goes no further.
+                None => return,
+            }
+            at = end;
+        }
+        if !complete {
+            nodes.push(self.directive_block_message(
+                messages::ERROR,
+                "Invalid meta directive.",
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ));
+        }
+        self.effects.ops.push(HeadOp::Insert {
+            root_seen: self.root_seen,
+            nodes,
+        });
+    }
+
+    /// `MetaBody.parsemeta` (`misc.py:579-609`) for one field: a `meta`
+    /// node, its `content` the body's lines joined by spaces, its first
+    /// token's `name=value` pair (or its `name`, the token itself) and its
+    /// other tokens' pairs set as attributes; or the INFO an empty body
+    /// raises, or the ERROR a later token that is no pair raises, each
+    /// quoting the line the machine stands on. Both messages are reported
+    /// without a line: docutils' top-level machine locates them
+    /// ([`Self::machine_loc`]). `None` when Sphinx 9.1.0 crashes on the
+    /// field (a name of whitespace alone: `tokens[0]` raises `IndexError`),
+    /// which the document state keeps (decision 13).
+    fn parse_meta_field(
+        &mut self,
+        field: MetaField<'_>,
+        input: &DirectiveInput<'_>,
+    ) -> Option<Node> {
+        let name = crate::doctree::unescape(&super::inline::escape2null(field.name_raw), false);
+        let mut indented: &[String] = &field.body;
+        // `strip_top`: the leading blank lines go.
+        while indented
+            .first()
+            .is_some_and(|line| line.trim_matches(crate::utils::py_isspace).is_empty())
+        {
+            indented = &indented[1..];
+        }
+        let loc = self.machine_loc(directive_loc(input));
+        if indented.is_empty() {
+            return Some(self.state.report(
+                messages::INFO,
+                &format!("No content for meta tag \"{name}\"."),
+                loc,
+                vec![messages::literal_block(&field.machine_line)],
+            ));
+        }
+        let mut node = Node::elem("meta", input.span);
+        let content =
+            crate::doctree::unescape(&super::inline::escape2null(&indented.join(" ")), false);
+        node.set("content", AttrValue::Str(content));
+        let tokens: Vec<&str> = crate::utils::py_split(&name).collect();
+        let Some((first, rest)) = tokens.split_first() else {
+            let location = super::LogLocation::Node {
+                source: field.line.source,
+                line: field.line.lineno,
+            };
+            let crash = super::SphinxCrash::python(
+                "IndexError",
+                "list index out of range".to_string(),
+                location,
+            );
+            self.state.raise(crash, 0, 0);
+            return None;
+        };
+        match extract_name_value(first) {
+            Ok((attname, value)) => set_meta_attribute(&mut node, &attname, value),
+            Err(_) => node.set("name", AttrValue::Str((*first).to_string())),
+        }
+        for token in rest {
+            match extract_name_value(token) {
+                Ok((attname, value)) => set_meta_attribute(&mut node, &attname, value),
+                Err(detail) => {
+                    return Some(self.state.report(
+                        messages::ERROR,
+                        &format!("Error parsing meta tag attribute \"{token}\": {detail}."),
+                        loc,
+                        vec![messages::literal_block(&field.machine_line)],
+                    ))
+                }
+            }
+        }
+        Some(node)
+    }
+
+    /// title (`misc.py:560-568`): `document['title']`, which the last
+    /// `title` directive sets ([`DocEffects::title`]). The directive
+    /// returns nothing.
+    fn run_title(&mut self, input: DirectiveInput<'_>) {
+        self.effects.title = input.arguments.into_iter().next();
+    }
+
+    /// restructuredtext-test-directive (`misc.py:669-690`): one INFO
+    /// message naming the directive, its arguments and options as Python
+    /// prints them, and its content as a literal block (or `None`).
+    fn run_test_directive(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let arguments: Vec<String> = input
+            .arguments
+            .iter()
+            .map(|argument| crate::utils::py_repr_str(argument))
+            .collect();
+        let options: Vec<String> = input
+            .options
+            .iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    OptVal::Str(text) => crate::utils::py_repr_str(text),
+                    OptVal::Null => "None".to_string(),
+                    OptVal::Int(n) => n.to_string(),
+                    OptVal::IntList(items) => format!(
+                        "[{}]",
+                        items
+                            .iter()
+                            .map(i64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    OptVal::StrList(items) => format!(
+                        "[{}]",
+                        items
+                            .iter()
+                            .map(|item| crate::utils::py_repr_str(item))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+                format!("{}: {value}", crate::utils::py_repr_str(name))
+            })
+            .collect();
+        let head = format!(
+            "Directive processed. Type=\"{}\", arguments=[{}], options={{{}}}, content:",
+            input.name,
+            arguments.join(", "),
+            options.join(", ")
+        );
+        let message = if input.content.is_empty() {
+            self.msg(
+                messages::INFO,
+                &format!("{head} None"),
+                input.span.source,
+                input.lineno,
+            )
+        } else {
+            let text = self.join_lines(&input.content);
+            self.report(
+                messages::INFO,
+                &head,
+                input.span.source,
+                input.lineno,
+                vec![messages::literal_block(&text)],
+            )
+        };
+        out.push(message);
     }
 
     /// rubric (body.py:240-254): inline children, no paragraph wrapper,
@@ -8201,16 +9407,50 @@ impl BlockParser {
         self.state
             .loc_overrides
             .insert(uid, DocLoc::at(line.source, line.lineno));
+        let (bias, own_line) = self.machine_count();
         self.state.parse.absolute_lines.push(super::AbsoluteLine {
             node: uid,
             source: line.source,
             lineno: line.lineno,
-            bias: self
-                .line_bias
-                .saturating_sub(self.definition_bias_base.unwrap_or(0)),
-            own_line: self.definition_bias_base.is_some(),
+            bias,
+            own_line,
             attached: self.attached,
         });
+    }
+
+    /// What the state machine reading the current line adds to a line's
+    /// place when it counts it ([`counted_line`]): the bias that accrued
+    /// inside the innermost glossary definition, or the whole of
+    /// [`Self::line_bias`] outside one, and whether the line is counted in
+    /// its own file, as a glossary definition's machine counts it
+    /// ([`Self::definition_bias_base`]).
+    fn machine_count(&self) -> (u32, bool) {
+        (
+            self.line_bias
+                .saturating_sub(self.definition_bias_base.unwrap_or(0)),
+            self.definition_bias_base.is_some(),
+        )
+    }
+
+    /// docutils' `abs_line_number()` while the parse is at the line
+    /// `lineno` of `source`, as Sphinx's directives take it for
+    /// `self.lineno`: the line as the top-level input as it stands counts
+    /// it ([`Self::input`]: the document's lines decorated with
+    /// `rst_prolog` and `rst_epilog`, every inclusion read so far spliced
+    /// in), by the rule [`Self::resolve_absolute_lines`] counts a node's
+    /// line by ([`counted_line`]); a line the input does not hold, a
+    /// detached parse's or one an include in a glossary definition read,
+    /// keeps its own line. A few Sphinx warnings print it as is, with
+    /// `location=(docname, self.lineno)`, which no reporter maps back to a
+    /// line of its file: the raw-`lineno` sites of [RC §4.1] (`hlist`,
+    /// `acks`).
+    fn abs_line_number(&self, source: u16, lineno: u32) -> u32 {
+        let offset = self
+            .input
+            .iter()
+            .position(|line| (line.source, line.lineno) == (source, lineno));
+        let (bias, own_line) = self.machine_count();
+        counted_line(offset, lineno, bias, own_line).unwrap_or(lineno)
     }
 
     /// Gives each node [`Self::note_absolute_line`] recorded its docutils
@@ -8273,15 +9513,10 @@ impl BlockParser {
             // there), the same divergence. The fix is a port of Sphinx's
             // per-definition nested parse (`nested_parse_to_nodes` with
             // `offset=definition.items[0][1]`).
-            let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
+            let offset = offsets.get(&(line.source, line.lineno)).copied();
+            let Some(absolute) = counted_line(offset, line.lineno, line.bias, line.own_line) else {
                 continue;
             };
-            let counted = if line.own_line {
-                line.lineno
-            } else {
-                u32::try_from(offset).unwrap_or(u32::MAX).saturating_add(1)
-            };
-            let absolute = counted.saturating_add(line.bias);
             if line.attached && absolute == line.lineno {
                 // The default rule's own: the span's.
                 self.state.loc_overrides.remove(&line.node);
@@ -8619,6 +9854,7 @@ impl BlockParser {
             content: Vec::new(),
             content_lineno: input.content_lineno,
             current: input.current,
+            block_end: input.block_end,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -8663,7 +9899,9 @@ impl BlockParser {
         }
         figure.children.push(image_node);
         if !input.content.is_empty() {
-            let children = self.parse_nested(&input.content, "figure");
+            // `node = nodes.Element()  # anonymous container for parsing`
+            // (`SP/docutils/parsers/rst/directives/images.py:163`).
+            let children = self.parse_nested(&input.content, "element");
             let mut caption_done = false;
             let mut legend_children: Vec<Node> = Vec::new();
             let mut children = children.into_iter();
@@ -9048,17 +10286,9 @@ impl BlockParser {
     /// every top-level child; without, a pending node is emitted for the
     /// ClassAttribute transform, which the read runs at 210
     /// ([`crate::transforms::misc::ClassAttribute`]), in Sphinx mode as in
-    /// docutils mode.
-    ///
-    /// docutils makes the pending node without a location, and its
-    /// container's `setup_child` gives it `document.current_line` when the
-    /// container has `document` set ([`DirectiveInput::current`]): the
-    /// line ClassAttribute's error reads (`line=pending.line`). A pending
-    /// node a substitution definition's directive returns joins the
-    /// definition, which has no `document`, and is moved out into the
-    /// definition's container (`states.py:2184-2191`), whose `setup_child`
-    /// stamps it if it can; the machine is still on the definition's last
-    /// line then, which [`DirectiveInput::current`] holds.
+    /// docutils mode. The pending node's location
+    /// ([`Self::note_returned_pending_location`]) is the line
+    /// ClassAttribute's error reads (`line=pending.line`).
     fn run_class(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let class_values = match convert_option(Conv::ClassOption, Some(&input.arguments[0])) {
             Ok(OptVal::StrList(list)) => list,
@@ -9094,18 +10324,27 @@ impl BlockParser {
                 input.span,
                 input.rawsource,
             );
-            let stamped = match &self.substitution_ctx {
-                Some(ctx) => ctx.hoist_attached,
-                None => self.attached,
-            };
-            let own = if stamped {
-                input.current
-            } else {
-                DocLoc::default()
-            };
-            self.note_location(&mut pending, own);
+            self.note_returned_pending_location(&mut pending, input.current);
             out.push(pending);
         }
+    }
+
+    /// Records the location docutils gives a `pending` node a directive
+    /// returns, which it makes without one: its container's `setup_child`
+    /// gives it `document.current_line` when the container has `document`
+    /// set ([`DirectiveInput::current`]). A pending node a substitution
+    /// definition's directive returns joins the definition, which has no
+    /// `document`, and is moved out into the definition's container
+    /// (`states.py:2184-2191`), whose `setup_child` stamps it if it can;
+    /// the machine is still on the definition's last line then, which
+    /// [`DirectiveInput::current`] holds.
+    fn note_returned_pending_location(&mut self, pending: &mut Node, current: DocLoc) {
+        let stamped = match &self.substitution_ctx {
+            Some(ctx) => ctx.hoist_attached,
+            None => self.attached,
+        };
+        let own = if stamped { current } else { DocLoc::default() };
+        self.note_location(pending, own);
     }
 
     /// `nodes.pending(transform, details, rawsource)` +
@@ -9116,20 +10355,15 @@ impl BlockParser {
     fn note_pending(
         &mut self,
         transform: PendingTransform,
-        mut details: Vec<(String, PyValue)>,
+        details: Vec<(String, PyValue)>,
         span: Span,
         rawsource: &str,
     ) -> Node {
-        details.sort_by(|(a, _), (b, _)| a.cmp(b));
         let order = self.state.parse.next_pending_order;
         self.state.parse.next_pending_order += 1;
         let mut node = Node::elem("pending", span);
         node.ext = Some(Box::new(NodeExt {
-            pending: Some(Box::new(Pending {
-                transform,
-                order,
-                details,
-            })),
+            pending: Some(Box::new(Pending::new(transform, order, details))),
             ..NodeExt::default()
         }));
         node.set_rawsource(rawsource);
@@ -9620,7 +10854,7 @@ fn keeps_duplicate_name_message(node: &Node) -> bool {
 /// may not end with a space, and interior `:` is allowed unless followed
 /// by space, backtick, or EOL. The marker must close with `:` + space/EOL.
 /// Returns (raw name, byte index just past the closing colon).
-fn field_marker(text: &str) -> Option<(String, usize)> {
+pub(super) fn field_marker(text: &str) -> Option<(String, usize)> {
     let mut chars = text.char_indices();
     let (_, first) = chars.next()?;
     if first != ':' {
@@ -10021,9 +11255,11 @@ enum DirectiveKind {
     DateDir,
     /// sphinx toctree (sphinx/directives/other.py TocTree).
     Toctree,
-    /// versionadded/versionchanged/deprecated/versionremoved:
-    /// (type name, label class, lead-in format).
-    VersionChange(&'static (&'static str, &'static str, &'static str)),
+    /// Sphinx's `VersionChange` (`SP/sphinx/domains/changeset.py:55-122`),
+    /// behind versionadded/versionchanged/deprecated/versionremoved and
+    /// their hyphenated spellings, which take their type from the name as
+    /// written ([`version_change_type`]).
+    VersionChange,
     SeeAlso,
     /// sphinx code-block/sourcecode (sphinx/directives/code.py).
     SphinxCodeBlock,
@@ -10063,6 +11299,39 @@ enum DirectiveKind {
     ProgramDir,
     /// `.. default-domain::` (`directives/__init__.py:353-366`).
     DefaultDomainDir,
+    /// docutils' `.. role::` (`SP/docutils/parsers/rst/directives/misc.py:472-531`).
+    RoleDir,
+    /// docutils' `contents` (`SP/docutils/parsers/rst/directives/parts.py:18-87`).
+    Contents,
+    /// docutils' `sectnum` / `section-numbering` (`parts.py:90-103`).
+    SectNum,
+    /// docutils' `target-notes`
+    /// (`SP/docutils/parsers/rst/directives/references.py:17-28`).
+    TargetNotes,
+    /// docutils' `header` / `footer` (`parts.py:106-129`).
+    Decoration(DecorationPart),
+    /// docutils' `meta` (`SP/docutils/parsers/rst/directives/misc.py:571-636`),
+    /// which Sphinx registers again unchanged (`SP/sphinx/directives/patches.py:230`).
+    Meta,
+    /// docutils' `title` (`misc.py:560-568`).
+    TitleDir,
+    /// docutils' `restructuredtext-test-directive` (`misc.py:669-690`).
+    TestDirective,
+    /// `.. default-role::`: docutils' (`misc.py:534-555`), and in a Sphinx
+    /// parse Sphinx's (`SP/sphinx/directives/__init__.py:317-350`).
+    DefaultRoleDir,
+    /// Sphinx's `Author` (`SP/sphinx/directives/other.py:185-216`), behind
+    /// `sectionauthor`, `moduleauthor` and `codeauthor`.
+    Author,
+    /// Sphinx's `TabularColumns` (`other.py:219-232`).
+    TabularColumns,
+    /// Sphinx's `Centered` (`other.py:235-253`).
+    Centered,
+    /// Sphinx's `Acks` (`other.py:256-273`).
+    Acks,
+    /// The std domain's `ProductionList`
+    /// (`SP/sphinx/domains/std/__init__.py:592-700`).
+    ProductionList,
     /// Test-only exercise of the [`SpliceRequest`] channel: content lines
     /// become a spliced source named by the argument. Kept alongside the
     /// real producer ([`Self::Include`], wave-4.5 task 12) because it
@@ -10195,11 +11464,6 @@ fn directive_spec_mode(lower: &str, sphinx: bool) -> Option<DirectiveSpec> {
     directive_spec(lower)
 }
 
-/// Suffixes a toctree entry may spell out and still name a document
-/// (sphinx `config.source_suffix`, whose default is `{'.rst': ...}`). These
-/// are the extensions `SphinxBuilder::is_source_file` discovers.
-const SOURCE_SUFFIXES: &[&str] = &[".rst", ".md", ".txt"];
-
 const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("maxdepth", Conv::PyIntAny),
     ("name", Conv::Unchanged),
@@ -10213,10 +11477,29 @@ const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("reversed", Conv::Flag),
 ];
 
-const VERSIONADDED: (&str, &str, &str) = ("versionadded", "added", "Added in version {}");
-const VERSIONCHANGED: (&str, &str, &str) = ("versionchanged", "changed", "Changed in version {}");
-const DEPRECATED: (&str, &str, &str) = ("deprecated", "deprecated", "Deprecated since version {}");
-const VERSIONREMOVED: (&str, &str, &str) = ("versionremoved", "removed", "Removed in version {}");
+/// `VersionChange.run`'s `name = name_aliases.get(self.name, self.name)`
+/// and its `versionlabels[name]` / `versionlabel_classes[name]`
+/// (`SP/sphinx/domains/changeset.py:24-43`, `:65-71`): for the directive's
+/// name as written, the node's type, its label class and the label, `{}`
+/// standing for the version. `None` for a name the label table does not
+/// hold, one in another case (`VersionAdded`, `Version-Added`), on which
+/// Sphinx's lookup raises `KeyError`.
+fn version_change_type(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    let name = match name {
+        "version-added" => "versionadded",
+        "version-changed" => "versionchanged",
+        "version-deprecated" => "deprecated",
+        "version-removed" => "versionremoved",
+        name => name,
+    };
+    Some(match name {
+        "versionadded" => ("versionadded", "added", "Added in version {}"),
+        "versionchanged" => ("versionchanged", "changed", "Changed in version {}"),
+        "deprecated" => ("deprecated", "deprecated", "Deprecated since version {}"),
+        "versionremoved" => ("versionremoved", "removed", "Removed in version {}"),
+        _ => return None,
+    })
+}
 
 const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
     ("force", Conv::Flag),
@@ -10271,14 +11554,16 @@ const LITERALINCLUDE_OPTS: &[(&str, Conv)] = &[
 ];
 
 fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
-    let version_change = |info: &'static (&'static str, &'static str, &'static str)| {
+    // The shape of Sphinx's `Author`, `TabularColumns` and `Centered`: one
+    // argument, whitespace allowed, no content, no options.
+    let one_argument = |kind| {
         Some(DirectiveSpec {
             required_arguments: 1,
-            optional_arguments: 1,
+            optional_arguments: 0,
             final_argument_whitespace: true,
-            has_content: true,
+            has_content: false,
             option_spec: &[],
-            kind: DirectiveKind::VersionChange(info),
+            kind,
         })
     };
     match lower {
@@ -10290,10 +11575,29 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: TOCTREE_OPTS,
             kind: DirectiveKind::Toctree,
         }),
-        "versionadded" => version_change(&VERSIONADDED),
-        "versionchanged" => version_change(&VERSIONCHANGED),
-        "deprecated" => version_change(&DEPRECATED),
-        "versionremoved" => version_change(&VERSIONREMOVED),
+        "versionadded" | "versionchanged" | "deprecated" | "versionremoved" | "version-added"
+        | "version-changed" | "version-deprecated" | "version-removed" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::VersionChange,
+        }),
+        // Sphinx registers docutils' `Class` under this name, as under
+        // `rst-class` (`SP/sphinx/directives/other.py:431-435`).
+        "cssclass" => directive_spec("class"),
+        "sectionauthor" | "moduleauthor" | "codeauthor" => one_argument(DirectiveKind::Author),
+        "tabularcolumns" => one_argument(DirectiveKind::TabularColumns),
+        "centered" => one_argument(DirectiveKind::Centered),
+        "acks" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Acks,
+        }),
         "seealso" => Some(DirectiveSpec {
             required_arguments: 0,
             optional_arguments: 0,
@@ -10397,8 +11701,8 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
 /// implements: `PythonDomain.directives` (`domains/python/__init__.py:739-754`),
 /// with the run()-time name aliasing resolved at spec-lookup time
 /// [PY §1.1], and `StandardDomain.directives`
-/// (`domains/std/__init__.py:739-747`) but `productionlist` (T18c). The c,
-/// cpp, js and rst domains' directives are not modelled (decision 16).
+/// (`domains/std/__init__.py:739-747`). The c, cpp, js and rst domains'
+/// directives are not modelled (decision 16).
 fn domain_directive_spec(domain: DomainId, name: &str) -> Option<DirectiveSpec> {
     match (domain, name) {
         (DomainId::Py, "function") => {
@@ -10469,6 +11773,14 @@ fn domain_directive_spec(domain: DomainId, name: &str) -> Option<DirectiveSpec> 
             has_content: true,
             option_spec: GLOSSARY_OPTS,
             kind: DirectiveKind::Glossary,
+        }),
+        (DomainId::Std, "productionlist") => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::ProductionList,
         }),
         _ => None,
     }
@@ -11102,37 +12414,78 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-/// docutils `nodes.Inline` membership for the kinds this parser emits,
-/// plus `Text` — the filter typed-field bodies pass through
-/// (`docfields.py:442`; block-level nodes would render invalid markup).
+/// The tagnames of every node class docutils 0.22.4 and Sphinx 9.1.0
+/// derive from `nodes.Inline`, subclasses included, with every module of
+/// both packages imported (probe `scratchpad/t17c-fix1/p3_inline_classes.py`,
+/// a recursive `__subclasses__` walk; a tagname is its class's name).
+/// Wider than [`is_inline_kind`] by five classes of modules a read never
+/// creates a node of: `Unknown` (the docutils XML parser), `footnotemark`
+/// and `math_reference` (the LaTeX builder), `graphviz` and
+/// `inheritance_diagram` (extensions this crate does not load).
+const INLINE_KINDS: [&str; 56] = [
+    "Unknown",
+    "abbreviation",
+    "acronym",
+    "citation_reference",
+    "desc_addname",
+    "desc_annotation",
+    "desc_inline",
+    "desc_name",
+    "desc_optional",
+    "desc_parameter",
+    "desc_parameterlist",
+    "desc_returns",
+    "desc_sig_element",
+    "desc_sig_keyword",
+    "desc_sig_keyword_type",
+    "desc_sig_literal_char",
+    "desc_sig_literal_number",
+    "desc_sig_literal_string",
+    "desc_sig_name",
+    "desc_sig_operator",
+    "desc_sig_punctuation",
+    "desc_sig_space",
+    "desc_signature",
+    "desc_signature_line",
+    "desc_type",
+    "desc_type_parameter",
+    "desc_type_parameter_list",
+    "download_reference",
+    "emphasis",
+    "footnote_reference",
+    "footnotemark",
+    "generated",
+    "graphviz",
+    "image",
+    "index",
+    "inheritance_diagram",
+    "inline",
+    "literal",
+    "literal_emphasis",
+    "literal_strong",
+    "manpage",
+    "math",
+    "math_reference",
+    "number_reference",
+    "pending_xref",
+    "pending_xref_condition",
+    "problematic",
+    "production",
+    "raw",
+    "reference",
+    "strong",
+    "subscript",
+    "substitution_reference",
+    "superscript",
+    "target",
+    "title_reference",
+];
+
+/// `isinstance(node, (nodes.Inline, nodes.Text))`, the filter a typed
+/// field's content passes through (`docfields.py:442`; block-level nodes
+/// would render invalid markup): `Text`, or one of [`INLINE_KINDS`].
 fn is_inline_or_text(node: &Node) -> bool {
-    matches!(
-        node.kind,
-        kinds::TEXT
-            | "abbreviation"
-            | "acronym"
-            | "citation_reference"
-            | "emphasis"
-            | "footnote_reference"
-            | "generated"
-            | "image"
-            | "index"
-            | "inline"
-            | "literal"
-            | "literal_emphasis"
-            | "literal_strong"
-            | "math"
-            | "pending_xref"
-            | "problematic"
-            | "raw"
-            | "reference"
-            | "strong"
-            | "subscript"
-            | "substitution_reference"
-            | "superscript"
-            | "target"
-            | "title_reference"
-    )
+    node.kind == kinds::TEXT || INLINE_KINDS.contains(&node.kind)
 }
 
 /// `PyXrefMixin._delimiters_re` split with the captured delimiters kept
@@ -11851,8 +13204,9 @@ pub(crate) fn index_entry_tuple(
 /// each comma-separated value re-reads its own `!`.
 ///
 /// The legacy `module:`/`keyword:`/... prefixes raise `ValueError` in
-/// sphinx; here they fall through to the shorthand branch (hardening note —
-/// the oracle corpus avoids them).
+/// sphinx, which crashes it (decision 13): the `index` directive and role
+/// raise that crash before they call this
+/// ([`super::roles::sphinx::removed_index_entry`]).
 pub(crate) fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
     use crate::utils::py_isspace;
     const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
@@ -12171,15 +13525,139 @@ struct DirectiveInput<'r> {
     /// (`StringList.info`, `SP/docutils/statemachine.py:1299-1307`;
     /// [DS §6.1]).
     current: DocLoc,
+    /// Where the machine that read the directive's block stands while the
+    /// directive runs (`self.state_machine.get_source_and_line()`): the
+    /// block's last line, its trailing blank lines included, whatever
+    /// option block a nested machine read.
+    block_end: DocLoc,
     span: Span,
     lineno: u32,
     rawsource: &'r str,
+}
+
+/// Whether a topic, a sidebar or a contents directive may not stand in the
+/// container `parent` (the parse's `state_machine.node`,
+/// [`BlockParser::nested_node_kind`]): docutils' check
+/// (`SP/docutils/parsers/rst/directives/body.py:42-47`,
+/// `parts.py:47-52`) rejects a container that is not the document, a
+/// section or a sidebar when it is a sub-structural, bibliographic,
+/// decorative, body or part element or a topic. The document and a
+/// section (`None`) and a sidebar may hold one, and so may a container
+/// that is none of those: the anonymous `Element` docutils and Sphinx
+/// parse content into (`"element"`: version-change, `rst-class` (docutils'
+/// `class`), `hlist`, figure, glossary-definition, table-directive and
+/// `replace` content), the one Sphinx parses object description and
+/// `py:module` content into (`"desc_content"`, `"py_module"`), and
+/// Sphinx's `only`, a plain `Element`. Every other kind this parser fills
+/// is one docutils rejects: a list item, a definition, a field body, a
+/// block quote, a footnote, an admonition, `seealso`, a topic, a header or
+/// footer, a table entry, and a substitution definition, where the
+/// directive a definition embeds (`.. |x| topic::`) runs.
+fn pseudo_section_parent_invalid(parent: Option<&'static str>) -> bool {
+    parent.is_some_and(|parent| {
+        !matches!(
+            parent,
+            "sidebar" | "element" | "desc_content" | "py_module" | "only"
+        )
+    })
 }
 
 /// A directive's own line: where a node the directive located before
 /// anything reported against it stands (`get_source_and_line(self.lineno)`).
 fn directive_loc(input: &DirectiveInput<'_>) -> DocLoc {
     DocLoc::at(input.span.source, input.lineno)
+}
+
+/// The std domain's `token_xrefs` (`SP/sphinx/domains/std/__init__.py:558-589`):
+/// `text` as Text around a `pending_xref` for each backquoted token
+/// ([`token_spans`]), holding a `literal` of its title classed `xref`. A
+/// `~group:name` token is titled `name` and targets `group:name`, a
+/// `:name` one targets and is titled `name`, any other with a colon is
+/// both as written, and a bare `name` is titled `name` and targets
+/// `group:name`, or `name` outside a group.
+fn token_xrefs(text: &str, group: &str, span: Span) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    let mut pos = 0;
+    for (start, end, token) in token_spans(text) {
+        if start > pos {
+            nodes.push(Node::text_node(&text[pos..start], span));
+        }
+        let (title, target) = if token.contains(':') {
+            if let Some(rest) = token.strip_prefix('~') {
+                // `_, title = token.split(':')`: the token has one colon.
+                let title = token.split_once(':').map_or(token, |(_, title)| title);
+                (title, rest.to_string())
+            } else if let Some(rest) = token.strip_prefix(':') {
+                (rest, rest.to_string())
+            } else {
+                (token, token.to_string())
+            }
+        } else if group.is_empty() {
+            (token, token.to_string())
+        } else {
+            (token, format!("{group}:{token}"))
+        };
+        let mut literal = Node::elem(kinds::LITERAL, span);
+        literal.set_rawsource(token);
+        literal.attrs.classes.push("xref".to_string());
+        literal.children.push(Node::text_node(title, span));
+        let mut xref = Node::elem(kinds::PENDING_XREF, span);
+        xref.set_rawsource(title);
+        xref.set("refdomain", AttrValue::Str("std".to_string()));
+        xref.set("reftarget", AttrValue::Str(target));
+        xref.set("reftype", AttrValue::Str("token".to_string()));
+        xref.children.push(literal);
+        nodes.push(xref);
+        pos = end;
+    }
+    if pos < text.len() {
+        nodes.push(Node::text_node(&text[pos..], span));
+    }
+    nodes
+}
+
+/// `token_re.finditer(text)` (`SP/sphinx/domains/std/__init__.py:45`,
+/// `` `((~?[\w-]*:)?\w+)` ``, Python's `\w` being `str.isalnum()` or `_`):
+/// each match's byte range and its group, the token. The optional group
+/// matches only where its `[\w-]` run ends at a colon, which the run
+/// cannot hold; failing that, or the `\w+` after it failing, the token is
+/// a bare `\w+`.
+fn token_spans(text: &str) -> Vec<(usize, usize, &str)> {
+    use crate::transforms::smartquotes::educate::py_is_word;
+    // The end of the run of characters `admits` from `from`.
+    let run = |from: usize, admits: &dyn Fn(char) -> bool| {
+        from + text[from..]
+            .chars()
+            .take_while(|&c| admits(c))
+            .map(char::len_utf8)
+            .sum::<usize>()
+    };
+    // `\w+` and the closing backquote from `from`: where the token ends.
+    let closes = |from: usize| {
+        let end = run(from, &py_is_word);
+        (end > from && text[end..].starts_with('`')).then_some(end)
+    };
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while let Some(found) = text[pos..].find('`') {
+        let start = pos + found;
+        let body = start + 1;
+        let tilde = usize::from(text[body..].starts_with('~'));
+        let group_end = run(body + tilde, &|c| py_is_word(c) || c == '-');
+        let end = if text[group_end..].starts_with(':') {
+            closes(group_end + 1).or_else(|| closes(body))
+        } else {
+            closes(body)
+        };
+        match end {
+            Some(end) => {
+                spans.push((start, end + 1, &text[body..end]));
+                pos = end + 1;
+            }
+            None => pos = body,
+        }
+    }
+    spans
 }
 
 /// Sphinx's admonitions pass their options to the node
@@ -12285,6 +13763,159 @@ const INCLUDE_OPTS: &[(&str, Conv)] = &[
     ("class", Conv::ClassOption),
     ("name", Conv::Unchanged),
 ];
+
+/// `Contents.backlinks_values` (`SP/docutils/parsers/rst/directives/parts.py:30`).
+const CONTENTS_BACKLINKS: &[&str] = &["top", "entry", "none"];
+
+/// `Contents.option_spec` (`parts.py:40-43`); `backlinks: none` is Python
+/// `None` in the pending's details ([`BlockParser::run_contents`]).
+const CONTENTS_OPTS: &[(&str, Conv)] = &[
+    ("depth", Conv::NonnegativeInt),
+    ("local", Conv::Flag),
+    ("backlinks", Conv::Choice(CONTENTS_BACKLINKS)),
+    ("class", Conv::ClassOption),
+];
+
+/// `Sectnum.option_spec` (`parts.py:94-97`): `depth` and `start` are
+/// Python `int`, negatives allowed.
+const SECTNUM_OPTS: &[(&str, Conv)] = &[
+    ("depth", Conv::PyIntAny),
+    ("start", Conv::PyIntAny),
+    ("prefix", Conv::UnchangedRequired),
+    ("suffix", Conv::UnchangedRequired),
+];
+
+/// `TargetNotes.option_spec` (`SP/docutils/parsers/rst/directives/references.py:21`):
+/// no `name`, although `run` calls `add_name`.
+const TARGET_NOTES_OPTS: &[(&str, Conv)] = &[("class", Conv::ClassOption)];
+
+/// `TestDirective.option_spec` (`SP/docutils/parsers/rst/directives/misc.py:676`).
+const TEST_DIRECTIVE_OPTS: &[(&str, Conv)] = &[("option", Conv::UnchangedRequired)];
+
+/// Which part of the document's `decoration` a `header` or `footer`
+/// directive fills ([`BlockParser::run_decoration`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecorationPart {
+    Header,
+    Footer,
+}
+
+impl DecorationPart {
+    /// The part's node kind, which is also the container kind its content
+    /// is parsed into.
+    fn kind(self) -> &'static str {
+        match self {
+            DecorationPart::Header => "header",
+            DecorationPart::Footer => "footer",
+        }
+    }
+
+    /// The part's node in `decoration`, where docutils' `get_header` and
+    /// `get_footer` look for it (`nodes.py:1597-1605`): the first child
+    /// when it is a header, the last when it is a footer; `None` when the
+    /// decoration has no such child yet.
+    fn slot(self, decoration: &mut Node) -> Option<&mut Node> {
+        let node = match self {
+            DecorationPart::Header => decoration.children.first_mut(),
+            DecorationPart::Footer => decoration.children.last_mut(),
+        }?;
+        (node.kind == self.kind()).then_some(node)
+    }
+}
+
+/// docutils' English `contents` label (`SP/docutils/languages/en.py`),
+/// the default title and name of a `contents` topic.
+const CONTENTS_LABEL: &str = "Contents";
+
+/// One field of a `meta` directive's content, as `MetaBody.parsemeta`
+/// reads it ([`BlockParser::parse_meta_field`]).
+struct MetaField<'f> {
+    /// The field name as the marker spells it, escapes included.
+    name_raw: &'f str,
+    /// `get_first_known_indented`'s block: the marker line's rest, then
+    /// the following lines, dedented, blank ones as empty strings.
+    body: Vec<String>,
+    /// The text of the block's last line, where the machine stands.
+    machine_line: String,
+    /// The marker line.
+    line: LineRec,
+}
+
+/// `utils.extract_name_value(token)[0]` (`SP/docutils/utils/__init__.py:400-439`)
+/// for one whitespace-free token: the attribute name, lowercased, and its
+/// value, quoted or not; or the `NameValueError` detail.
+fn extract_name_value(token: &str) -> Result<(String, String), String> {
+    let Some(equals) = token.find('=') else {
+        return Err("missing \"=\"".to_string());
+    };
+    let attname = token[..equals].trim_matches(crate::utils::py_isspace);
+    if equals == 0 || attname.is_empty() {
+        return Err("missing attribute name before \"=\"".to_string());
+    }
+    let line = token[equals + 1..].trim_start_matches(crate::utils::py_isspace);
+    let Some(quote) = line.chars().next() else {
+        return Err(format!("missing value after \"{attname}=\""));
+    };
+    let value = if quote == '\'' || quote == '"' {
+        let after = &line[quote.len_utf8()..];
+        let Some(end) = after.find(quote) else {
+            return Err(format!(
+                "attribute \"{attname}\" missing end quote ({quote})"
+            ));
+        };
+        let tail = &after[end + quote.len_utf8()..];
+        if tail
+            .chars()
+            .next()
+            .is_some_and(|c| !crate::utils::py_isspace(c))
+        {
+            return Err(format!(
+                "attribute \"{attname}\" end quote ({quote}) not followed by whitespace"
+            ));
+        }
+        after[..end].to_string()
+    } else {
+        match line.find(' ') {
+            Some(space) => line[..space].to_string(),
+            None => line.to_string(),
+        }
+    };
+    Ok((attname.to_lowercase(), value))
+}
+
+/// `node[attname.lower()] = val` on a `meta` node. The name is the user's,
+/// so the key is owned rather than interned (`src/doctree/intern.rs`):
+/// every attribute is kept, however many distinct names a document uses.
+fn set_meta_attribute(node: &mut Node, attname: &str, value: String) {
+    node.set_attr(
+        std::borrow::Cow::Owned(attname.to_lowercase()),
+        AttrValue::Str(value),
+    );
+}
+
+/// A directive's options as the details of the `pending` node it makes
+/// (`pending.details.update(self.options)`): each option's converted
+/// value as docutils stores it, unless `special` gives it. No option of
+/// the directives that make one is a list of integers, which a pending's
+/// details cannot hold.
+fn pending_details(
+    options: &[(String, OptVal)],
+    special: impl Fn(&str, &OptVal) -> Option<PyValue>,
+) -> Vec<(String, PyValue)> {
+    options
+        .iter()
+        .filter_map(|(name, value)| {
+            let python = special(name, value).or_else(|| match value {
+                OptVal::Null => Some(PyValue::None),
+                OptVal::Str(text) => Some(PyValue::Str(text.clone())),
+                OptVal::Int(n) => Some(PyValue::Int(*n)),
+                OptVal::StrList(items) => Some(PyValue::StrList(items.clone())),
+                OptVal::IntList(_) => None,
+            })?;
+            Some((name.clone(), python))
+        })
+        .collect()
+}
 
 // ----------------------------------------------------------------------
 // include helpers (docutils misc.py Include)
@@ -13823,6 +15454,22 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: RAW_OPTS,
             kind: DirectiveKind::Raw,
         }),
+        "role" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::RoleDir,
+        }),
+        "default-role" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::DefaultRoleDir,
+        }),
         "include" => Some(DirectiveSpec {
             required_arguments: 1,
             optional_arguments: 0,
@@ -13830,6 +15477,68 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: false,
             option_spec: INCLUDE_OPTS,
             kind: DirectiveKind::Include,
+        }),
+        "contents" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: CONTENTS_OPTS,
+            kind: DirectiveKind::Contents,
+        }),
+        // `section-numbering` is the English alias of `sectnum`
+        // (`SP/docutils/parsers/rst/languages/en.py`).
+        "sectnum" | "section-numbering" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: SECTNUM_OPTS,
+            kind: DirectiveKind::SectNum,
+        }),
+        "target-notes" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: TARGET_NOTES_OPTS,
+            kind: DirectiveKind::TargetNotes,
+        }),
+        "header" | "footer" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Decoration(if lower == "header" {
+                DecorationPart::Header
+            } else {
+                DecorationPart::Footer
+            }),
+        }),
+        "meta" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Meta,
+        }),
+        "title" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::TitleDir,
+        }),
+        "restructuredtext-test-directive" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: TEST_DIRECTIVE_OPTS,
+            kind: DirectiveKind::TestDirective,
         }),
         "line-block" => Some(DirectiveSpec {
             required_arguments: 0,
@@ -13841,7 +15550,7 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
         }),
         // en-alias table entries whose canonical directive is implemented
         // (languages/en.py: code-block/sourcecode -> code, rst-class ->
-        // class, section-numbering -> sectnum [unimplemented]).
+        // class; section-numbering -> sectnum is with `sectnum`).
         "class" | "rst-class" => Some(DirectiveSpec {
             required_arguments: 1,
             optional_arguments: 0,
@@ -14058,13 +15767,8 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                         .to_string(),
                 );
             };
-            match py_int_canonical(v) {
-                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
-            }
+            let (neg, digits) = pyformat::int(v)?;
+            Ok(int_optval(neg, &digits))
         }
         Conv::PositiveInt => {
             let Some(v) = value else {
@@ -14073,13 +15777,9 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                         .to_string(),
                 );
             };
-            match py_int_canonical(v) {
-                Some((false, digits)) if digits != "0" => Ok(int_optval(false, &digits)),
-                Some(_) => Err("negative or zero value; must be positive".to_string()),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+            match pyformat::int(v)? {
+                (false, digits) if digits != "0" => Ok(int_optval(false, &digits)),
+                _ => Err("negative or zero value; must be positive".to_string()),
             }
         }
         Conv::IntOrNothing => match value {
@@ -14113,15 +15813,11 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
         }
         Conv::OptionalInt => match value {
             None => Ok(OptVal::Null),
-            Some(v) => match py_int_canonical(v) {
+            Some(v) => match pyformat::int(v)? {
                 // `int('-0')` is 0, which optional_int accepts —
-                // py_int_canonical already reports it non-negative.
-                Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
-                Some((false, digits)) => Ok(int_optval(false, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+                // `pyformat::int` already reports it non-negative.
+                (true, _) => Err("negative value; must be positive or zero".to_string()),
+                (false, digits) => Ok(int_optval(false, &digits)),
             },
         },
         Conv::SingleCharOrUnicode | Conv::SingleCharOrWhitespaceOrUnicode => {
@@ -14175,13 +15871,17 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
             let Some(v) = value else {
                 return Err("argument required but none supplied".to_string());
             };
-            match py_int(v) {
-                Some(n) if n >= 1 => Ok(OptVal::Int(n)),
-                Some(_) => Err("negative or zero value; must be positive".to_string()),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+            match pyformat::int(v)? {
+                (false, digits) if digits != "0" => match digits.parse() {
+                    Ok(n) => Ok(OptVal::Int(n)),
+                    // A width past `i64`, which Python reads at any
+                    // precision, is not modelled.
+                    Err(_) => Err(format!(
+                        "invalid literal for int() with base 10: {}",
+                        py_repr(Some(v))
+                    )),
+                },
+                _ => Err("negative or zero value; must be positive".to_string()),
             }
         }
         Conv::Unchanged => Ok(OptVal::Str(value.unwrap_or("").to_string())),
@@ -14247,13 +15947,10 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
         }
         Conv::FlagOrInt => match value {
             None => Ok(OptVal::Null),
-            Some(v) => match py_int_canonical(v) {
-                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
-            },
+            Some(v) => {
+                let (neg, digits) = pyformat::int(v)?;
+                Ok(int_optval(neg, &digits))
+            }
         },
         Conv::Figwidth => {
             let Some(v) = value else {
@@ -14311,23 +16008,16 @@ fn format_choice_values(values: &[&str]) -> String {
 }
 
 /// unicode_code (directives/__init__.py:330-352): decimal, hex forms
-/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches.
+/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches. A
+/// code is read with `chr(int(code))` or `chr(int(value, 16))`
+/// ([`pyformat::int`], [`pyformat::chr`]), whose messages
+/// [`unicode_character`] passes on.
 fn unicode_code(code: &str) -> Result<String, String> {
     // Python gates on str.isdigit() (Nd digits AND digit-typed No chars
     // like '²'), then int() — which only accepts the Nd ones.
     if !code.is_empty() && code.chars().all(super::digits::is_python_digit) {
-        let Some((false, digits)) = py_int_canonical(code) else {
-            return Err(format!(
-                "invalid literal for int() with base 10: {}",
-                py_repr(Some(code))
-            ));
-        };
-        let n: u32 = digits
-            .parse()
-            .map_err(|_| format!("code too large ({code})"))?;
-        return char::from_u32(n)
-            .map(|c| c.to_string())
-            .ok_or_else(|| "chr() arg not in range(0x110000)".to_string());
+        let (_, digits) = pyformat::int(code)?;
+        return unicode_character(pyformat::chr(&digits, 10));
     }
     let lower = code.to_lowercase();
     let hex = ["0x", "x", "\\x", "u+", "u", "\\u"]
@@ -14343,13 +16033,25 @@ fn unicode_code(code: &str) -> Result<String, String> {
                 .map(|h| h.to_string())
         });
     match hex {
-        Some(h) => {
-            let n = u32::from_str_radix(&h, 16).map_err(|_| format!("code too large ({h})"))?;
-            char::from_u32(n)
-                .map(|c| c.to_string())
-                .ok_or_else(|| "chr() arg not in range(0x110000)".to_string())
-        }
+        Some(h) => unicode_character(pyformat::chr(&h, 16)),
         None => Ok(code.to_string()),
+    }
+}
+
+/// The character of `chr()`'s code point in `unicode_code`, or the
+/// message of the `ValueError` it raises: `chr`'s own, and for `chr`'s
+/// `OverflowError` `code too large (<its message>)`. A surrogate, which
+/// Python makes a `str` of and a Rust `char` cannot hold, is not modelled:
+/// it keeps the `chr() arg not in range(0x110000)` it has always read as.
+fn unicode_character(code_point: Result<u32, pyformat::ChrError>) -> Result<String, String> {
+    match code_point {
+        Ok(point) => char::from_u32(point)
+            .map(String::from)
+            .ok_or_else(|| pyformat::ChrError::NotInRange.message().to_string()),
+        Err(error @ pyformat::ChrError::Overflow) => {
+            Err(format!("code too large ({})", error.message()))
+        }
+        Err(error) => Err(error.message().to_string()),
     }
 }
 
@@ -14367,55 +16069,10 @@ fn int_optval(neg: bool, digits: &str) -> OptVal {
 /// nonnegative_int (directives/__init__.py:224-231), with Python's own
 /// int() error text for bad literals.
 fn nonnegative_int(s: &str) -> Result<OptVal, String> {
-    match py_int_canonical(s) {
-        Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
-        Some((false, digits)) => Ok(int_optval(false, &digits)),
-        None => Err(format!(
-            "invalid literal for int() with base 10: {}",
-            py_repr(Some(s))
-        )),
+    match pyformat::int(s)? {
+        (true, _) => Err("negative value; must be positive or zero".to_string()),
+        (false, digits) => Ok(int_optval(false, &digits)),
     }
-}
-
-/// Python int(str), canonicalized: arbitrary precision (the value is the
-/// canonical ASCII decimal string), Unicode Nd digits accepted with their
-/// decimal values, single underscores allowed BETWEEN digits, surrounding
-/// whitespace ignored. Returns (negative, digits-without-sign, canonical
-/// leading-zero-stripped ASCII string WITH sign).
-fn py_int_canonical(s: &str) -> Option<(bool, String)> {
-    // `int()` strips Unicode White_Space ONLY — probed over all 0x110000
-    // codepoints against CPython 3.12: it REJECTS the four C0 separators
-    // `\x1c`-`\x1f` that `str.isspace` admits, so Rust's `trim()` is the
-    // exactly-right predicate here and `py_isspace` would be wrong.
-    let t = s.trim();
-    let (neg, body) = match t.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, t.strip_prefix('+').unwrap_or(t)),
-    };
-    if body.is_empty() {
-        return None;
-    }
-    let mut digits = String::with_capacity(body.len());
-    let mut prev_underscore = true; // leading underscore rejected
-    for c in body.chars() {
-        if c == '_' {
-            if prev_underscore {
-                return None;
-            }
-            prev_underscore = true;
-            continue;
-        }
-        let d = super::digits::decimal_digit_value(c)?;
-        digits.push(char::from(b'0' + d as u8));
-        prev_underscore = false;
-    }
-    if prev_underscore {
-        // trailing underscore (or all-underscores)
-        return None;
-    }
-    let stripped = digits.trim_start_matches('0');
-    let canonical = if stripped.is_empty() { "0" } else { stripped };
-    Some((neg && canonical != "0", canonical.to_string()))
 }
 
 fn py_int_display(neg: bool, digits: &str) -> String {
@@ -14427,10 +16084,10 @@ fn py_int_display(neg: bool, digits: &str) -> String {
 }
 
 /// Python int(str) for numeric consumers; None when invalid OR outside
-/// i64 (attr-facing paths must use [`py_int_canonical`] to keep exact
+/// i64 (attr-facing paths must use [`pyformat::int`] to keep exact
 /// digits for values Python would carry at arbitrary precision).
 fn py_int(s: &str) -> Option<i64> {
-    let (neg, digits) = py_int_canonical(s)?;
+    let (neg, digits) = pyformat::int(s).ok()?;
     py_int_display(neg, &digits).parse::<i64>().ok()
 }
 
@@ -14476,11 +16133,12 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
         return Err(no_valid());
     }
     // Python: int() first (arbitrary precision — exact digits preserved),
-    // float() second; negative or unlisted unit is the units-list error.
-    let (negative, norm) = if let Some((neg, digits)) = py_int_canonical(number) {
+    // float() second, printed as `f'{value}{unit}'` prints a float
+    // (`repr()`); negative or unlisted unit is the units-list error.
+    let (negative, norm) = if let Ok((neg, digits)) = pyformat::int(number) {
         (neg, py_int_display(neg, &digits))
-    } else if let Ok(f) = number.parse::<f64>() {
-        (f < 0.0, py_float_str(f))
+    } else if let Ok(f) = pyformat::float(number) {
+        (f < 0.0, pyformat::float_repr(f))
     } else {
         return Err(no_valid());
     };
@@ -14496,15 +16154,6 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
         ));
     }
     Ok(format!("{norm}{unit}"))
-}
-
-/// Python float repr for simple decimals (1.0 -> "1.0", 1.5 -> "1.5").
-fn py_float_str(f: f64) -> String {
-    if f == f.trunc() && f.abs() < 1e16 {
-        format!("{f:.1}")
-    } else {
-        format!("{f}")
-    }
 }
 
 /// directives.uri (directives/__init__.py:209-221): unescaped whitespace is
@@ -15331,6 +16980,48 @@ mod tests {
     use super::*;
     use crate::rst::{parse_rst, ParseOptions};
 
+    /// docutils' `parse_measure` reads a length's number with `int()`,
+    /// then `float()`, and `int()` reads no more than 4,300 digits, leading
+    /// zeros among them: past them the number is the float, `inf` for 4,301
+    /// ones and `1.0` for 4,300 zeros and a 1. docutils 0.22.4's
+    /// `length_or_percentage_or_unitless(value, 'px')`, probed.
+    #[test]
+    fn a_length_past_int_digit_limit_reads_as_a_float() {
+        let length =
+            |value: String| convert_option(Conv::LengthOrPercentageOrUnitless("px"), Some(&value));
+        assert_eq!(
+            length(format!("{}px", "1".repeat(4301))),
+            Ok(OptVal::Str("infpx".to_string()))
+        );
+        assert_eq!(
+            length(format!("{}1px", "0".repeat(4300))),
+            Ok(OptVal::Str("1.0px".to_string()))
+        );
+        assert_eq!(
+            length(format!("{}1px", "0".repeat(4299))),
+            Ok(OptVal::Str("1px".to_string()))
+        );
+    }
+
+    /// docutils prints a length that `int()` cannot read and `float()` can
+    /// as Python prints the float (`get_measure`'s `f'{value}{unit}'`,
+    /// `repr()`: [`pyformat::float_repr`]), in exponent form from 1e16 up
+    /// and below 1e-4. docutils 0.22.4's trees, probed (`publish_doctree`
+    /// with the source path `<snippet>`).
+    #[test]
+    fn a_length_read_as_a_float_prints_as_python_prints_it() {
+        assert_eq!(
+            pf(".. image:: x.png\n   :width: 12345678901234567.5px\n   :height: 0.00001em\n"),
+            "<document source=\"<snippet>\">\n    <image height=\"1e-05em\" uri=\"x.png\" \
+             width=\"1.2345678901234568e+16px\">\n"
+        );
+        assert_eq!(
+            pf(".. figure:: x.png\n   :figwidth: 100000000000000000.5\n"),
+            "<document source=\"<snippet>\">\n    <figure width=\"1e+17px\">\n        \
+             <image uri=\"x.png\">\n"
+        );
+    }
+
     /// The `(source, lineno)` sequence of a line stream.
     fn stream_of(lines: &[LineRec]) -> Vec<(u16, u32)> {
         lines.iter().map(|l| (l.source, l.lineno)).collect()
@@ -15395,7 +17086,7 @@ mod tests {
 
     #[test]
     fn splicing_a_pushed_source_inserts_its_recs_at_the_cursor() {
-        let mut p = BlockParser::new("one\ntwo\nthree", "<doc>");
+        let mut p = BlockParser::new("one\ntwo\nthree", "<doc>", Default::default());
         let mut stream = std::mem::take(&mut p.top);
         assert_eq!(stream_of(&stream), vec![(0, 1), (0, 2), (0, 3)]);
 
@@ -16433,6 +18124,282 @@ mod tests {
                 "well-formed glossary warned: {src:?}"
             );
         }
+    }
+
+    /// Sphinx's `VersionChange` (`SP/sphinx/domains/changeset.py:65-117`)
+    /// nested-parses its content, after the text on the directive line
+    /// too: the first paragraph carries the label and the later paragraphs
+    /// are its siblings. The research report's `va2` and `va3` ([SQ §4.3])
+    /// and the same for `versionchanged`, each Sphinx 9.1.0's tree (smart
+    /// quotes off).
+    #[test]
+    fn version_change_keeps_multi_paragraph_content() {
+        for (src, sphinx) in [
+            (
+                ".. versionadded:: 1.0\n   First paragraph ends here\n\n   \"Second\" paragraph.\n\nAfter.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph ends here\n        <paragraph>\n            \"Second\" paragraph.\n    <paragraph>\n        After.\n",
+            ),
+            (
+                ".. versionadded:: 1.0\n\n   First paragraph.\n\n   \"Second\" paragraph.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph.\n        <paragraph>\n            \"Second\" paragraph.\n",
+            ),
+            (
+                ".. versionchanged:: 2.0 Text here.\n\n   Second paragraph.\n\n   Third paragraph.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Text here.\n        <paragraph>\n            Second paragraph.\n        <paragraph>\n            Third paragraph.\n",
+            ),
+            (
+                ".. versionchanged:: 2.0\n\n   First.\n\n   Second.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            First.\n        <paragraph>\n            Second.\n",
+            ),
+        ] {
+            assert_eq!(pf_sphinx(src), sphinx, "{src:?}");
+        }
+    }
+
+    /// Our read of each `(rst, body, warnings)` row, the way the read-state
+    /// harness reads a snippet with `keep_warnings` on or off as given,
+    /// against Sphinx 9.1.0's: its post-read doctree, less the document
+    /// line, and its warning stream, one line per entry. One entry per row
+    /// that differs.
+    pub(super) fn sphinx_read_differences(
+        rows: &[(&str, &str, &[&str])],
+        keep_warnings: bool,
+    ) -> Vec<String> {
+        rows.iter()
+            .filter_map(|&(rst, body, warnings)| {
+                let read = crate::transforms::test_support::read_snippet(rst, keep_warnings);
+                (read.body != body || read.warnings != warnings).then(|| {
+                    format!(
+                        "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{}{:#?}",
+                        read.body, read.warnings
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Version-change content read as Sphinx 9.1.0 reads it (oracle: each
+    /// snippet built as `index.rst` with the dummy builder, `smartquotes =
+    /// False`; the post-read doctree and the `-w` stream). The text on the
+    /// directive line is inline-parsed at the line below the directive's,
+    /// and the content is nested-parsed into a container that has
+    /// `document` set, whether or not that text is there: a construct the
+    /// content holds behaves as it does anywhere else, and a node in it is
+    /// located as docutils locates it.
+    #[test]
+    fn version_change_content_reads_like_sphinx() {
+        let differences = sphinx_read_differences(&[
+            // the inline-parse audit's cases: a literal block keeps its text
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   Example::\n\n      :nod:bogus:`x`\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n                Example:\n            <literal_block xml:space=\"preserve\">\n                :nod:bogus:`x`\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // a comment's text is no inline markup
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   Text.\n\n   .. a *comment\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n                Text.\n            <comment xml:space=\"preserve\">\n                a *comment\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // text on the directive line, then content
+            (
+                "Title\n=====\n\n.. deprecated:: 1.0 Arg :nod:arg:`x` *open\n\n   Body :nod:body:`y`.\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"deprecated\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified deprecated\">\n                    Deprecated since version 1.0: \n                Arg \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:arg:`x`\n                 \n                <problematic ids=\"id4\" refid=\"id3\">\n                    *\n                open\n            <paragraph>\n                Body \n                <problematic ids=\"id6\" refid=\"id5\">\n                    :nod:body:`y`\n                .\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id8\" refid=\"id7\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:arg", "<SRCDIR>/index.rst:5: ERROR: Unknown interpreted text role \"nod:arg\". [docutils]", "<SRCDIR>/index.rst:5: WARNING: Inline emphasis start-string without end-string. [docutils]", "WARNING: unknown role name: nod:body", "<SRCDIR>/index.rst:6: ERROR: Unknown interpreted text role \"nod:body\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:8: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // a list after the first paragraph
+            (
+                "Title\n=====\n\n.. versionchanged:: 1.0\n\n   First :nod:p1:`x`.\n\n   * item *open\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionchanged\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified changed\">\n                    Changed in version 1.0: \n                First \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:p1:`x`\n                .\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        item \n                        <problematic ids=\"id4\" refid=\"id3\">\n                            *\n                        open\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id6\" refid=\"id5\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:p1", "<SRCDIR>/index.rst:6: ERROR: Unknown interpreted text role \"nod:p1\". [docutils]", "<SRCDIR>/index.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // an image `:target:` reference has the source and no line
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   .. image:: pic.png\n      :target: bad_\n\nAfter.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n            <problematic ids=\"id2\" refid=\"id1\">\n        <paragraph>\n            After.\n",
+                &["<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // the first paragraph's children stand at its line
+            (
+                ".. versionadded:: 1.0\n\n   See bad_ here.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n",
+                &["<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // a later paragraph stands at its own line
+            (
+                ".. versionadded:: 1.0\n\n   First.\n\n   See bad_ here.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First.\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // the text on the directive line stands at the directive's
+            (
+                ".. versionadded:: 1.0 See bad_ here.\n\n   And bad2_ there.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n        <paragraph>\n            And \n            <problematic ids=\"id4\" refid=\"id3\">\n                bad2_\n             there.\n",
+                &["<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]", "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad2\". [docutils]"],
+            ),
+            // version changes nest
+            (
+                ".. versionadded:: 1.0\n\n   .. versionchanged:: 2.0\n\n      Inner bad_ text.\n\n   Outer bad2_ text.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <versionmodified type=\"versionchanged\" version=\"2.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified changed\">\n                    Changed in version 2.0: \n                Inner \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n                 text.\n        <paragraph>\n            Outer \n            <problematic ids=\"id4\" refid=\"id3\">\n                bad2_\n             text.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]", "<SRCDIR>/index.rst:7: ERROR: Unknown target name: \"bad2\". [docutils]"],
+            ),
+            // a target in the content (CPython `using/cmdline.rst`)
+            (
+                ".. versionremoved:: 3.14\n\n   ``-J`` is no longer reserved for use by Jython_,\n   and now has no special meaning.\n\n   .. _Jython: https://www.jython.org/\n",
+                "    <versionmodified type=\"versionremoved\" version=\"3.14\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 3.14: \n            <literal>\n                -J\n             is no longer reserved for use by \n            <reference name=\"Jython\" refuri=\"https://www.jython.org/\">\n                Jython\n            ,\n            and now has no special meaning.\n        <target ids=\"jython\" names=\"jython\" refuri=\"https://www.jython.org/\">\n",
+                &[],
+            ),
+            // a directive in the content (CPython `c-api/contextvars.rst`)
+            (
+                ".. versionchanged:: 3.7.1\n\n   .. note::\n\n      Text::\n\n         PyContext *PyContext_New(void);\n\n      See :nod:issue:`34762` here.\n",
+                "    <versionmodified type=\"versionchanged\" version=\"3.7.1\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 3.7.1: \n        <note>\n            <paragraph>\n                Text:\n            <literal_block xml:space=\"preserve\">\n                PyContext *PyContext_New(void);\n            <paragraph>\n                See \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:issue:`34762`\n                 here.\n",
+                &["WARNING: unknown role name: nod:issue", "<SRCDIR>/index.rst:9: ERROR: Unknown interpreted text role \"nod:issue\". [docutils]"],
+            ),
+            // no section titles
+            (
+                "Top\n===\n\n.. versionadded:: 1.0\n\n   Title\n   -----\n\n   Text.\n",
+                "    <section ids=\"top\" names=\"top\">\n        <title>\n            Top\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n            <paragraph>\n                Text.\n",
+                &["<SRCDIR>/index.rst:7: ERROR: Unexpected section title.", "", "Title", "----- [docutils]"],
+            ),
+            // directive-line text that runs on
+            (
+                ".. versionadded:: 1.0 First line\n   continues *here\n\n   Content.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First line\n            continues \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            here\n        <paragraph>\n            Content.\n",
+                &["<SRCDIR>/index.rst:2: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+            ),
+            // content that does not start with a paragraph
+            (
+                ".. versionadded:: 1.0\n\n   - item\n\n   Text.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    item\n        <paragraph>\n            Text.\n",
+                &[],
+            ),
+            // a target in the content stays: its parent is a TextElement
+            (
+                ".. versionadded:: 1.0\n\n   .. _lab:\n\n   Text.\n\nSee lab_.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <target ids=\"lab\" names=\"lab\">\n        <paragraph>\n            Text.\n    <paragraph>\n        See \n        <reference name=\"lab\" refid=\"lab\">\n            lab\n        .\n",
+                &[],
+            ),
+            // the first paragraph keeps its ids, classes, names and dupnames
+            (
+                ".. versionadded:: 1.0\n\n   .. rst-class:: special\n\n      First para.\n\n   Second.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph classes=\"special\" translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First para.\n        <paragraph>\n            Second.\n",
+                &[],
+            ),
+            // in a list item
+            (
+                "- item\n\n  .. versionchanged:: 2.0\n\n     Text bad_ here.\n\n     More.\n",
+                "    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <versionmodified type=\"versionchanged\" version=\"2.0\">\n                <paragraph translatable=\"0\">\n                    <inline classes=\"versionmodified changed\">\n                        Changed in version 2.0: \n                    Text \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n                     here.\n                <paragraph>\n                    More.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // in a table cell
+            (
+                "+------------------------------+\n| .. versionadded:: 1.0        |\n|                              |\n|    Cell bad_ text.           |\n+------------------------------+\n",
+                "    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"30\">\n            <tbody>\n                <row>\n                    <entry>\n                        <versionmodified type=\"versionadded\" version=\"1.0\">\n                            <paragraph translatable=\"0\">\n                                <inline classes=\"versionmodified added\">\n                                    Added in version 1.0: \n                                Cell \n                                <problematic ids=\"id2\" refid=\"id1\">\n                                    bad_\n                                 text.\n",
+                &["<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+        ], false);
+        assert!(differences.is_empty(), "{}", differences.join("\n"));
+    }
+
+    /// docutils' topic and sidebar (`BasePseudoSection.run`,
+    /// `SP/docutils/parsers/rst/directives/body.py:42-47`) may stand in a
+    /// container that is no body, part, sub-structural, bibliographic or
+    /// decorative element and no topic: the anonymous `Element` docutils and
+    /// Sphinx parse content into (version changes, `rst-class` (docutils'
+    /// `class`), object descriptions, `py:module`, glossary definitions,
+    /// figures) and Sphinx's `only`. An admonition, `seealso` and a footer
+    /// may not hold one (oracle as above; the rows after the version-change
+    /// ones: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness,
+    /// `keep_warnings = False`, scratchpad/t18a/probes/sread.py).
+    #[test]
+    fn pseudo_sections_stand_in_anonymous_containers() {
+        let differences = sphinx_read_differences(&[
+            // version-change content
+            (
+                ".. versionadded:: 1.0\n\n   .. topic:: T\n\n      Body.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <topic>\n            <title>\n                T\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // version-change content, a sidebar
+            (
+                ".. versionadded:: 1.0\n\n   .. sidebar:: S\n\n      Body.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <sidebar>\n            <title>\n                S\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // topic_in_only
+            (
+                ".. only:: html\n\n   .. topic:: T\n\n      Body.\n",
+                "    <only expr=\"html\">\n        <topic>\n            <title>\n                T\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // topic_in_py_module
+            (
+                ".. py:module:: m\n\n   .. topic:: T\n\n      Body.\n",
+                "    <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-m\">\n    <topic ids=\"module-m\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+                &[],
+            ),
+            // topic_in_desc
+            (
+                ".. class:: x\n\n   .. topic:: T\n\n      Body.\n",
+                "    <index entries=\"('single',\\ 'x\\ (built-in\\ class)',\\ 'x',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"x\" _toc_parts=\"('x',)\" class=\"\" classes=\"sig sig-object\" fullname=\"x\" ids=\"x\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n        <desc_content>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+                &[],
+            ),
+            // topic_in_cmdoption
+            (
+                ".. option:: -x\n\n   .. topic:: T\n\n      Body.\n",
+                "    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ -x',\\ 'cmdoption-x',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-x\" classes=\"sig sig-object\" ids=\"cmdoption-x\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+                &[],
+            ),
+            // topic_in_glossary
+            (
+                ".. glossary::\n\n   term\n      .. topic:: T\n\n         Body.\n",
+                "    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term\">\n                    term\n                    <index entries=\"('single',\\ 'term',\\ 'term-term',\\ 'main',\\ None)\">\n                <definition>\n                    <topic>\n                        <title>\n                            T\n                        <paragraph>\n                            Body.\n",
+                &[],
+            ),
+            // sidebar_in_glossary
+            (
+                ".. glossary::\n\n   term\n      .. sidebar:: S\n\n         Body.\n",
+                "    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term\">\n                    term\n                    <index entries=\"('single',\\ 'term',\\ 'term-term',\\ 'main',\\ None)\">\n                <definition>\n                    <sidebar>\n                        <title>\n                            S\n                        <paragraph>\n                            Body.\n",
+                &[],
+            ),
+            // topic_in_figure
+            (
+                ".. figure:: a.png\n\n   Caption.\n\n   .. topic:: T\n\n      Body.\n",
+                "    <figure ids=\"id1\">\n        <image candidates=\"{'*': 'a.png'}\" uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+                &["<SRCDIR>/index.rst:1: WARNING: image file not readable: a.png [image.not_readable]"],
+            ),
+            // sidebar_in_figure
+            (
+                ".. figure:: a.png\n\n   Caption.\n\n   .. sidebar:: S\n\n      Body.\n",
+                "    <figure ids=\"id1\">\n        <image candidates=\"{'*': 'a.png'}\" uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <sidebar>\n                <title>\n                    S\n                <paragraph>\n                    Body.\n",
+                &["<SRCDIR>/index.rst:1: WARNING: image file not readable: a.png [image.not_readable]"],
+            ),
+            // topic_in_rst_class
+            (
+                ".. rst-class:: c\n\n   .. topic:: T\n\n      Body.\n",
+                "    <topic classes=\"c\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+                &[],
+            ),
+            // topic_in_seealso
+            (
+                ".. seealso::\n\n   .. topic:: T\n\n      Body.\n",
+                "    <seealso>\n",
+                &["<SRCDIR>/index.rst:3: ERROR: The \"topic\" directive may not be used within topics or body elements. [docutils]"],
+            ),
+            // topic_in_note
+            (
+                ".. note::\n\n   .. topic:: T\n\n      Body.\n",
+                "    <note>\n",
+                &["<SRCDIR>/index.rst:3: ERROR: The \"topic\" directive may not be used within topics or body elements. [docutils]"],
+            ),
+            // topic_in_footer
+            (
+                ".. footer::\n\n   .. topic:: T\n\n      Body.\n",
+                "    <decoration>\n        <footer>\n",
+                &["<SRCDIR>/index.rst:3: ERROR: The \"topic\" directive may not be used within topics or body elements. [docutils]"],
+            ),
+        ], false);
+        assert!(differences.is_empty(), "{}", differences.join("\n"));
     }
 }
 
@@ -18976,6 +20943,185 @@ mod py_docfield_tests {
             "{pf}"
         );
     }
+
+    /// `rst` read as the document `index` of a temporary project holding
+    /// `files`, the way a build reads it: stage R, then stage M's
+    /// collectors. The post-read doctree's body (its document line left
+    /// out), the records the read logged, rendered, and the project's
+    /// source directory, canonical, as the download collector spells it.
+    fn read_in_project(
+        rst: &str,
+        files: &[(&str, &str)],
+    ) -> (String, Vec<String>, std::path::PathBuf) {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        for (path, text) in files {
+            std::fs::write(tmp.path().join(path), text).expect("write");
+        }
+        let srcdir = crate::utils::canonicalize_simplified(tmp.path()).expect("canonical");
+        let parse = ParseOptions {
+            source_path: srcdir.join("index.rst").display().to_string(),
+            sphinx: true,
+            docname: "index".to_string(),
+            srcdir: Some(srcdir.clone()),
+            ..ParseOptions::default()
+        };
+        let read = crate::read::read_standalone(
+            rst,
+            &parse,
+            &crate::read::ReadSettings::sphinx_defaults(),
+        );
+        let pformat = read.outcome.doctree().root.pformat();
+        let (_, body) = pformat.split_once('\n').expect("a document line");
+        let records = read
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(true))
+            .collect();
+        (body.to_string(), records, srcdir)
+    }
+
+    /// The post-read tree of `.. py:function:: f(<arg>)` under the title
+    /// `Index`, its one parameter `arg` described as `description`, whose
+    /// `:type <arg>:` content Sphinx 9.1.0 renders as the lines `inline`
+    /// (probe `scratchpad/t17c-fix1/p3_typefield.py`, the dummy builder's
+    /// post-read doctree, smart quotes on: ` -- ` reads ` – `).
+    fn typed_param_tree(arg: &str, inline: &[&str], description: &str) -> String {
+        let mut tree = String::new();
+        for line in [
+            "    <section ids=\"index\" names=\"index\">\n",
+            "        <title>\n",
+            "            Index\n",
+            "        <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n",
+            "        <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n",
+            "            <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n",
+            "                <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n",
+            "                    f\n",
+            "                <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n",
+            "                    <desc_parameter xml:space=\"preserve\">\n",
+            "                        <desc_sig_name classes=\"n\">\n",
+        ] {
+            tree.push_str(line);
+        }
+        tree.push_str(&format!("                            {arg}\n"));
+        for line in [
+            "            <desc_content>\n",
+            "                <field_list>\n",
+            "                    <field>\n",
+            "                        <field_name>\n",
+            "                            Parameters\n",
+            "                        <field_body>\n",
+            "                            <paragraph>\n",
+            "                                <literal_strong>\n",
+        ] {
+            tree.push_str(line);
+        }
+        tree.push_str(&format!("                                    {arg}\n"));
+        tree.push_str("                                 (\n");
+        for line in inline {
+            tree.push_str(line);
+        }
+        tree.push_str("                                )\n");
+        tree.push_str("                                 – \n");
+        tree.push_str(&format!("                                {description}\n"));
+        tree
+    }
+
+    /// `DocFieldTransformer` keeps what of a `:type:` field's content is
+    /// `nodes.Inline` or `Text` (`docfields.py:442`). A
+    /// `download_reference` is `Inline` (a `reference`), so a `:type:` of
+    /// `:download:` keeps it, and the download collector (880) then gives
+    /// it its file's `filename`, or warns at it that the file is not
+    /// readable (probe `scratchpad/t17c-fix1/p3_typefield.py`).
+    #[test]
+    fn a_type_field_keeps_a_download_reference() {
+        let index = ".. py:function:: f(a)\n\n   :param a: first\n";
+        let (body, records, srcdir) = read_in_project(
+            &format!("Index\n=====\n\n{index}   :type a: :download:`ta.txt`\n"),
+            &[("f.txt", "f\n")],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "a",
+                &[
+                    "                                <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"ta.txt\" reftype=\"download\" refwarn=\"0\">\n",
+                    "                                    <literal classes=\"xref download\">\n",
+                    "                                        ta.txt\n",
+                ],
+                "first"
+            )
+        );
+        assert_eq!(
+            records,
+            [format!(
+                "{}:7: WARNING: download file not readable: {} [download.not_readable]",
+                srcdir.join("index.rst").display(),
+                srcdir.join("ta.txt").display()
+            )]
+        );
+
+        let (body, records, _) = read_in_project(
+            &format!("Index\n=====\n\n{index}   :type a: :download:`f.txt`\n"),
+            &[("f.txt", "f\n")],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "a",
+                &[
+                    "                                <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n",
+                    "                                    <literal classes=\"xref download\">\n",
+                    "                                        f.txt\n",
+                ],
+                "first"
+            )
+        );
+        assert_eq!(records, Vec::<String>::new());
+    }
+
+    /// [`INLINE_KINDS`], sorted, holds every kind [`is_inline_kind`] keeps
+    /// in a substitution definition, and the five it adds.
+    #[test]
+    fn the_type_field_filter_keeps_every_inline_class() {
+        let added = [
+            "Unknown",
+            "footnotemark",
+            "graphviz",
+            "inheritance_diagram",
+            "math_reference",
+        ];
+        assert!(INLINE_KINDS.windows(2).all(|pair| pair[0] < pair[1]));
+        let shared: Vec<&str> = INLINE_KINDS
+            .into_iter()
+            .filter(|kind| !added.contains(kind))
+            .collect();
+        assert_eq!(shared.len(), 51);
+        assert!(shared.iter().all(|kind| is_inline_kind(kind)));
+        assert!(added.iter().all(|kind| !is_inline_kind(kind)));
+    }
+
+    /// The same for a `manpage`, a `literal` and so `Inline` (probe
+    /// `scratchpad/t17c-fix1/p3_typefield.py`).
+    #[test]
+    fn a_type_field_keeps_a_manpage() {
+        let (body, records, _) = read_in_project(
+            "Index\n=====\n\n.. py:function:: f(b)\n\n   :param b: second\n   \
+             :type b: :manpage:`ls(1)`\n",
+            &[],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "b",
+                &[
+                    "                                <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n",
+                    "                                    ls(1)\n",
+                ],
+                "second"
+            )
+        );
+        assert_eq!(records, Vec::<String>::new());
+    }
 }
 
 // ----------------------------------------------------------------------
@@ -19825,6 +21971,7 @@ mod include_tests {
         let mut p = BlockParser::new(
             "before para\n\n.. include:: inc.rst\n\nafter para\n",
             "main.rst",
+            Default::default(),
         );
         let request = SpliceRequest {
             segments: vec![
@@ -22299,7 +24446,7 @@ mod literalinclude_tests {
             assert_eq!(
                 warnings[0]
                     .location
-                    .render(&output.doctree.sources, tmp.path(), "main"),
+                    .render(&output.doctree.sources, tmp.path(), "main", ".rst"),
                 crate::diagnostics::Location::Path {
                     path: format!("{p}.rst"),
                     line: Some(line)
@@ -22331,7 +24478,7 @@ mod literalinclude_tests {
         assert_eq!(
             warnings[0]
                 .location
-                .render(&output.doctree.sources, tmp.path(), "main"),
+                .render(&output.doctree.sources, tmp.path(), "main", ".rst"),
             crate::diagnostics::Location::Path {
                 path: at(tmp.path(), "part.rst.rst"),
                 line: Some(3)
@@ -22641,5 +24788,1056 @@ mod literalinclude_tests {
             Some(&AttrValue::Str(at(tmp.path(), "sub/data.py")))
         );
         assert_eq!(node.children[0].astext(), "x = 1\n");
+    }
+}
+
+#[cfg(test)]
+mod structure_directive_tests {
+    //! The document-structure directives' parse halves ([SD §3], wave 5a
+    //! T18a): `contents`, `sectnum`/`section-numbering`, `target-notes`,
+    //! `meta`, `title`, `header`, `footer` and
+    //! `restructuredtext-test-directive`, and Sphinx's extra directives
+    //! ([SD §3.9], T18c), against docutils 0.22.4's parse layer and Sphinx
+    //! 9.1.0's read.
+
+    use crate::rst::{parse_rst_full, ParseOptions};
+    use crate::transforms::reporter::LogRecord;
+    use crate::transforms::state::SourceRef;
+
+    /// docutils' reporter level names, by level.
+    const LEVEL_NAMES: [&str; 5] = ["DEBUG", "INFO", "WARNING", "ERROR", "SEVERE"];
+
+    /// `rst` parsed as `tools/gen_doctree_fixture.py` has docutils parse
+    /// it (docutils mode, `<snippet>`): the pformat, and the warning stream
+    /// docutils writes at `report_level` 1, each reporter record as
+    /// `system_message.astext()` (`<source>:<line>: (<TYPE>/<level>)
+    /// <text>`) and a line break.
+    fn docutils_parse(rst: &str) -> (String, String) {
+        let output = parse_rst_full(
+            rst,
+            &ParseOptions {
+                source_path: "<snippet>".into(),
+                sphinx: false,
+                docname: "index".into(),
+                ..Default::default()
+            },
+        );
+        let sources = &output.doctree.sources;
+        let stream = output
+            .state
+            .log
+            .iter()
+            .filter_map(|record| match record {
+                LogRecord::Reporter {
+                    level, loc, text, ..
+                } => {
+                    let source = match loc.source {
+                        Some(SourceRef::Table(id)) => sources[usize::from(id)].as_str(),
+                        None => "None",
+                    };
+                    let line = loc.line.map(|line| line.to_string()).unwrap_or_default();
+                    let name = LEVEL_NAMES[usize::from(*level)];
+                    Some(format!("{source}:{line}: ({name}/{level}) {text}\n"))
+                }
+                LogRecord::Logger { .. } => None,
+            })
+            .collect();
+        (output.doctree.root.pformat(), stream)
+    }
+
+    /// Each `(rst, pformat, stream)` row's docutils 0.22.4 parse layer
+    /// against ours ([`docutils_parse`]): one entry per row that differs.
+    fn parse_layer_differences(rows: &[(&str, &str, &str)]) -> Vec<String> {
+        rows.iter()
+            .filter_map(|&(rst, pformat, stream)| {
+                let (ours, our_stream) = docutils_parse(rst);
+                (ours != pformat || our_stream != stream).then(|| {
+                    format!(
+                        "{rst:?}\n--- docutils 0.22.4 ---\n{pformat}{stream}--- ours ---\n{ours}{our_stream}"
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// The parse halves of the structure directives, as docutils 0.22.4
+    /// parses them (`tools/gen_doctree_fixture.py`'s settings: the
+    /// `dir_parts` family): `contents` builds its topic, registers its
+    /// implicit target and leaves a `pending` (Contents, 720) whose
+    /// internals print the options; `sectnum` and `target-notes` leave a
+    /// bare `pending` (SectNum, 710; TargetNotes, 540); `title` sets the
+    /// document's attribute, the last one winning; `header` and `footer`
+    /// fill the document's `decoration`; `restructuredtext-test-directive`
+    /// is one INFO message. The error paths: option and argument errors
+    /// carry the block from the start, so docutils prints it; the context
+    /// and empty-content errors are `DirectiveError`s, printed without it
+    /// and given it afterwards. The `role` and `default-role` rows are the
+    /// first docutils-mode pins of T17a's directives.
+    //
+    // oracle: docutils 0.22.4, `parse_pformat` of tools/gen_doctree_fixture.py
+    //   with `report_level = 1` and its warning stream, for each row
+    //   (scratchpad/t18a/probes/dparse.py).
+    #[test]
+    fn structure_directives_parse_like_docutils() {
+        let differences = parse_layer_differences(&[
+            // contents_all_options
+            (
+                "Title\n=====\n\n.. contents:: Table of *Contents*\n   :depth: 2\n   :local:\n   :backlinks: none\n   :class: a B\n\nSec\n---\n",
+                "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents a b local\" ids=\"table-of-contents\" names=\"table\\ of\\ contents\">\n            <title>\n                Table of \n                <emphasis>\n                    Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n                       backlinks: None\n                       class: ['a', 'b']\n                       depth: 2\n                       local: None\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n",
+                "",
+            ),
+            // contents_name_taken
+            (
+                "Contents\n========\n\n.. contents::\n",
+                "<document source=\"<snippet>\">\n    <section ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <topic classes=\"contents\" ids=\"id1\">\n            <title>\n                Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n",
+                "",
+            ),
+            // contents_title_problem
+            (
+                ".. contents:: *unclosed\n",
+                "<document source=\"<snippet>\">\n    <topic classes=\"contents\" ids=\"unclosed\" names=\"*unclosed\">\n        <title>\n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            unclosed\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+                "<snippet>:1: (WARNING/2) Inline emphasis start-string without end-string.\n",
+            ),
+            // contents_in_note
+            (
+                ".. note::\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <note>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"contents\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n",
+                "<snippet>:3: (ERROR/3) The \"contents\" directive may not be used within topics or body elements.\n",
+            ),
+            // contents_in_list_item
+            (
+                "* item\n\n  .. contents::\n",
+                "<document source=\"<snippet>\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"contents\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. contents::\n",
+                "<snippet>:3: (ERROR/3) The \"contents\" directive may not be used within topics or body elements.\n",
+            ),
+            // contents_in_header
+            (
+                ".. header::\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"contents\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. contents::\n",
+                "<snippet>:3: (ERROR/3) The \"contents\" directive may not be used within topics or body elements.\n",
+            ),
+            // contents_in_topic
+            (
+                ".. topic:: T\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            T\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"contents\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n",
+                "<snippet>:3: (ERROR/3) The \"contents\" directive may not be used within topics or body elements.\n",
+            ),
+            // contents_bad_backlinks
+            (
+                ".. contents::\n   :backlinks: bogus\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"contents\" directive:\n            invalid option value: (option: \"backlinks\"; value: 'bogus')\n            \"bogus\" unknown; choose from \"top\", \"entry\", or \"none\".\n        <literal_block xml:space=\"preserve\">\n            .. contents::\n               :backlinks: bogus\n",
+                "<snippet>:1: (ERROR/3) Error in \"contents\" directive:\ninvalid option value: (option: \"backlinks\"; value: 'bogus')\n\"bogus\" unknown; choose from \"top\", \"entry\", or \"none\".\n\n.. contents::\n   :backlinks: bogus\n",
+            ),
+            // contents_bad_depth
+            (
+                ".. contents::\n   :depth: -1\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"contents\" directive:\n            invalid option value: (option: \"depth\"; value: '-1')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. contents::\n               :depth: -1\n",
+                "<snippet>:1: (ERROR/3) Error in \"contents\" directive:\ninvalid option value: (option: \"depth\"; value: '-1')\nnegative value; must be positive or zero.\n\n.. contents::\n   :depth: -1\n",
+            ),
+            // sectnum_options
+            (
+                ".. sectnum::\n   :depth: 2\n   :start: 3\n   :prefix: A.\n   :suffix: )\n",
+                "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n               depth: 2\n               prefix: 'A.'\n               start: 3\n               suffix: ')'\n",
+                "",
+            ),
+            // sectnum_alias
+            (
+                ".. section-numbering::\n",
+                "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n",
+                "",
+            ),
+            // sectnum_bad
+            (
+                ".. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            invalid option value: (option: \"depth\"; value: 'x')\n            invalid literal for int() with base 10: 'x'.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum::\n               :depth: x\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            invalid option value: (option: \"prefix\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum::\n               :prefix:\n    <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum:: arg\n",
+                "<snippet>:1: (ERROR/3) Error in \"sectnum\" directive:\ninvalid option value: (option: \"depth\"; value: 'x')\ninvalid literal for int() with base 10: 'x'.\n\n.. sectnum::\n   :depth: x\n\n<snippet>:4: (ERROR/3) Error in \"sectnum\" directive:\ninvalid option value: (option: \"prefix\"; value: None)\nargument required but none supplied.\n\n.. sectnum::\n   :prefix:\n\n<snippet>:7: (ERROR/3) Error in \"sectnum\" directive:\nno content permitted.\n\n.. sectnum:: arg\n",
+            ),
+            // sectnum_negative
+            (
+                ".. sectnum::\n   :depth: -2\n   :start: -1\n",
+                "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n               depth: -2\n               start: -1\n",
+                "",
+            ),
+            // target_notes_class
+            (
+                ".. target-notes::\n   :class: x y\n",
+                "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.references.TargetNotes\n             .details:\n               class: ['x', 'y']\n",
+                "",
+            ),
+            // target_notes_errors
+            (
+                ".. target-notes:: arg\n\n.. target-notes::\n   :name: x\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"target-notes\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. target-notes:: arg\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"target-notes\" directive:\n            unknown option: \"name\".\n        <literal_block xml:space=\"preserve\">\n            .. target-notes::\n               :name: x\n",
+                "<snippet>:1: (ERROR/3) Error in \"target-notes\" directive:\nno content permitted.\n\n.. target-notes:: arg\n\n<snippet>:3: (ERROR/3) Error in \"target-notes\" directive:\nunknown option: \"name\".\n\n.. target-notes::\n   :name: x\n",
+            ),
+            // title_field_line
+            (
+                ".. title:: one\n   :x: y\n",
+                "<document source=\"<snippet>\" title=\"one\n:x: y\">\n",
+                "",
+            ),
+            // title_twice
+            (
+                ".. title:: first\n.. title:: second\n\nT\n=\n\nb\n",
+                "<document source=\"<snippet>\" title=\"second\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            b\n",
+                "",
+            ),
+            // title_missing
+            (
+                ".. title::\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"title\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. title::\n",
+                "<snippet>:1: (ERROR/3) Error in \"title\" directive:\n1 argument(s) required, 0 supplied.\n\n.. title::\n",
+            ),
+            // header_footer_twice
+            (
+                ".. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n",
+                "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                Top \n                <emphasis>\n                    header\n                 text\n            <paragraph>\n                Second header para\n        <footer>\n            <paragraph>\n                Bottom footer \n                <substitution_reference refname=\"date\">\n                    date\n    <substitution_definition names=\"date\">\n        today-ish\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+                "",
+            ),
+            // header_empty
+            (
+                ".. header::\n\n.. footer::\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"header\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. header::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"footer\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. footer::\n",
+                "<snippet>:1: (ERROR/3) Content block expected for the \"header\" directive; none found.\n<snippet>:3: (ERROR/3) Content block expected for the \"footer\" directive; none found.\n",
+            ),
+            // test_directive
+            (
+                ".. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Directive processed. Type=\"restructuredtext-test-directive\", arguments=['arg'], options={'option': 'v'}, content:\n        <literal_block xml:space=\"preserve\">\n            content\n",
+                "<snippet>:1: (INFO/1) Directive processed. Type=\"restructuredtext-test-directive\", arguments=['arg'], options={'option': 'v'}, content:\n\ncontent\n",
+            ),
+            // test_directive_no_content
+            (
+                ".. restructuredtext-test-directive::\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Directive processed. Type=\"restructuredtext-test-directive\", arguments=[], options={}, content: None\n",
+                "<snippet>:1: (INFO/1) Directive processed. Type=\"restructuredtext-test-directive\", arguments=[], options={}, content: None\n",
+            ),
+            // role_custom
+            (
+                ".. role:: custom\n\n:custom:`x`\n",
+                "<document source=\"<snippet>\">\n    <paragraph>\n        <inline classes=\"custom\">\n            x\n",
+                "",
+            ),
+            // role_errors
+            (
+                "Title\n=====\n\n.. role::\n\n.. role:: bad name\n\n.. role:: x(nonexistent)\n\n.. role:: y(raw)\n\n.. default-role:: nonexistent\n\n:y:`q`\n",
+                "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                \"role\" directive requires arguments on the first line.\n            <literal_block xml:space=\"preserve\">\n                .. role::\n        <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                \"role\" directive arguments not valid role names: \"bad name\".\n            <literal_block xml:space=\"preserve\">\n                .. role:: bad name\n        <system_message level=\"1\" line=\"8\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\n                Trying \"nonexistent\" as canonical role name.\n        <system_message level=\"3\" line=\"8\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nonexistent\".\n            <literal_block xml:space=\"preserve\">\n                .. role:: x(nonexistent)\n        <system_message level=\"1\" line=\"12\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\n                Trying \"nonexistent\" as canonical role name.\n        <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nonexistent\".\n            <literal_block xml:space=\"preserve\">\n                .. default-role:: nonexistent\n        <paragraph>\n            <problematic ids=\"id2\" refid=\"id1\">\n                :y:`q`\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"14\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                No format (Writer name) is associated with this role: \"y\".\n                The \"raw\" role cannot be used directly.\n                Instead, use the \"role\" directive to create a new role with an associated format.\n",
+                "<snippet>:4: (ERROR/3) \"role\" directive requires arguments on the first line.\n<snippet>:6: (ERROR/3) \"role\" directive arguments not valid role names: \"bad name\".\n<snippet>:8: (INFO/1) No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"nonexistent\" as canonical role name.\n<snippet>:8: (ERROR/3) Unknown interpreted text role \"nonexistent\".\n\n.. role:: x(nonexistent)\n\n<snippet>:12: (INFO/1) No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"nonexistent\" as canonical role name.\n<snippet>:12: (ERROR/3) Unknown interpreted text role \"nonexistent\".\n\n.. default-role:: nonexistent\n\n<snippet>:14: (ERROR/3) No format (Writer name) is associated with this role: \"y\".\nThe \"raw\" role cannot be used directly.\nInstead, use the \"role\" directive to create a new role with an associated format.\n",
+            ),
+            // default_role
+            (
+                ".. default-role:: literal\n\n`x`\n",
+                "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            x\n",
+                "",
+            ),
+        ]);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// `meta` parses its content as a field list of its own (`MetaBody`):
+    /// each field a `meta` node, or the message its attributes raise. It
+    /// returns nothing: the nodes and messages go to the head of the
+    /// document, before the first child that is not a title, subtitle,
+    /// rubric or meta as the document stands when the directive runs (the
+    /// start of a document holding only such children), so a later
+    /// directive's messages precede an earlier one's and every meta
+    /// precedes the decoration. The document holds a top-level bullet,
+    /// enumerated or field list from its first item on and a definition or
+    /// option list from its second (docutils appends them to it then), so
+    /// a meta in such an item goes before the list; a block quote, or a
+    /// list in a section, is appended only once parsed. The two `MetaBody`
+    /// messages carry no line: the reporter locates them at docutils'
+    /// top-level state machine, which stands at the end of the top-level
+    /// construct the directive sits in, its trailing blank lines included,
+    /// or of the first construct of a run of explicit-markup blocks.
+    //
+    // oracle: docutils 0.22.4 (parse layer, as above) for the pformat rows
+    //   and the line table (the inputs of the structure-directives
+    //   report's §3.4 table, scratchpad/wave5a-research/structure-
+    //   directives/docutils_probes/meta_line_table.py); Sphinx 9.1.0's read
+    //   through tools/gen_sphinx_fixture.py's harness with `keep_warnings =
+    //   True` for the read rows (scratchpad/t18a/probes/sread.py). The list
+    //   rows: scratchpad/t18a-fix3/probes/{dparse.py, sread.py}, cases.json.
+    #[test]
+    fn meta_goes_to_document_head() {
+        let mut differences = parse_layer_differences(&[
+            // meta_basic
+            (
+                "Para.\n\n.. meta::\n   :keywords: a, b\n   :description lang=en: d\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"a, b\" name=\"keywords\">\n    <meta content=\"d\" lang=\"en\" name=\"description\">\n    <paragraph>\n        Para.\n",
+                "",
+            ),
+            // meta_errors
+            (
+                "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"fine\" name=\"ok\">\n    <system_message level=\"3\" line=\"15\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               :ok: fine\n               trailing paragraph\n    <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               not a field\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <system_message level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No content for meta tag \"empty\".\n        <literal_block xml:space=\"preserve\">\n            :empty:\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Content block expected for the \"meta\" directive; none found.\n            <literal_block xml:space=\"preserve\">\n                .. meta::\n",
+                "<snippet>:4: (ERROR/3) Content block expected for the \"meta\" directive; none found.\n<snippet>:5: (INFO/1) No content for meta tag \"empty\".\n\n:empty:\n<snippet>:5: (ERROR/3) Error parsing meta tag attribute \"bad\": missing \"=\".\n\n:description bad: x\n<snippet>:12: (ERROR/3) Invalid meta directive.\n\n.. meta::\n   not a field\n\n<snippet>:15: (ERROR/3) Invalid meta directive.\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n",
+            ),
+            // meta_only_metas
+            (
+                ".. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n",
+                "",
+            ),
+            // meta_after_rubric
+            (
+                ".. rubric:: R\n\n.. meta::\n   :k: v\n\nPara.\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <rubric>\n        R\n    <paragraph>\n        Para.\n",
+                "",
+            ),
+            // meta_in_section_nested
+            (
+                "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"nested\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <note>\n",
+                "",
+            ),
+            // header_in_section
+            (
+                "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"k\" name=\"keywords\">\n    <decoration>\n        <footer>\n            <paragraph>\n                Deep footer\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n",
+                "",
+            ),
+            // meta_continuation
+            (
+                ".. meta::\n   :description: one\n      two\n\n   :k: v\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"one two \" name=\"description\">\n    <meta content=\"v\" name=\"k\">\n",
+                "",
+            ),
+            // meta_bad_tokens
+            (
+                ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
+                "<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n\n:description lang=\"unterminated: x\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n\n:description =x: y\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n\n:a b=\"c\"d: e\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n\n:a b=: e\n",
+            ),
+            // meta_in_list_after_rubric
+            (
+                ".. rubric:: R\n\n* item\n\n  .. meta::\n     :k: v\n",
+                "<document source=\"<snippet>\">\n    <rubric>\n        R\n    <meta content=\"v\" name=\"k\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_bullet_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_bullet_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\n* one\n* two\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+                "",
+            ),
+            // meta_in_enumerated_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n1. item\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_enumerated_list_start_value
+            (
+                ".. meta::\n   :a: 1\n\n3. item\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" start=\"3\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                item\n    <system_message level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+                "<snippet>:4: (INFO/1) Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+            ),
+            // meta_in_field_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n:f: x\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <field_list>\n        <field>\n            <field_name>\n                f\n            <field_body>\n                <paragraph>\n                    x\n",
+                "",
+            ),
+            // meta_in_definition_list_first_item
+            (
+                ".. meta::\n   :a: 1\n\nterm1\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n",
+                "",
+            ),
+            // meta_in_definition_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\nterm1\n   def1\n\nterm2\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n                <paragraph>\n                    def1\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n",
+                "",
+            ),
+            // meta_in_option_list_first_item
+            (
+                ".. meta::\n   :a: 1\n\n-x  opt\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n            <description>\n                <paragraph>\n                    opt\n",
+                "",
+            ),
+            // meta_in_option_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\n-x  opt\n-y  opt2\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n            <description>\n                <paragraph>\n                    opt\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -y\n            <description>\n                <paragraph>\n                    opt2\n",
+                "",
+            ),
+            // meta_in_nested_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n* outer\n\n  * inner\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                outer\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        inner\n",
+                "",
+            ),
+            // meta_in_list_in_section
+            (
+                "T\n=\n\n.. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    item\n",
+                "",
+            ),
+            // meta_in_block_quote_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n..\n\n   quoted\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <comment xml:space=\"preserve\">\n    <block_quote>\n        <paragraph>\n            quoted\n",
+                "",
+            ),
+            // header_in_list_after_rubric
+            (
+                ".. rubric:: R\n\n* item\n\n  .. header:: H\n",
+                "<document source=\"<snippet>\">\n    <rubric>\n        R\n    <decoration>\n        <header>\n            <paragraph>\n                H\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+        ]);
+
+        // The line-less messages' line: the top-level machine's.
+        let line_table: [(&str, u8, u32); 10] = [
+            (".. meta::\n   :description bad: x\n", 3, 2),
+            ("Para.\n\n.. meta::\n   :d bad: x\n\nPara.\n", 3, 5),
+            ("Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n", 3, 6),
+            ("Para.\n\n.. meta::\n   :d bad: x\n\n\n\nPara.\n", 3, 7),
+            ("T\n=\n\nPara.\n\n.. meta::\n   :d bad: x\n\nPara.\n", 3, 8),
+            (
+                "Title\n=====\n\n.. note::\n\n   .. meta::\n      :description bad: x\n\n   more\n\nmore2\n",
+                3,
+                10,
+            ),
+            ("Para.\n\n.. meta::\n   :a: b\n\n.. meta::\n   :d bad: x\n\nPara.\n", 3, 5),
+            ("Para.\n\n.. note:: n\n\n.. meta::\n   :d bad: x\n\nPara.\n", 3, 4),
+            ("Para.\n\n.. _t:\n\n.. meta::\n   :d bad: x\n\nPara.\n", 3, 7),
+            ("Para.\n\n.. meta::\n   :empty:\n\nPara.\n", 1, 5),
+        ];
+        for (rst, level, line) in line_table {
+            let output = parse_rst_full(
+                rst,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx: false,
+                    ..Default::default()
+                },
+            );
+            let found: Vec<(u8, Option<u32>)> = output
+                .state
+                .log
+                .iter()
+                .filter_map(|record| match record {
+                    LogRecord::Reporter {
+                        level, loc, text, ..
+                    } if text.starts_with("Error parsing meta tag")
+                        || text.starts_with("No content for meta tag") =>
+                    {
+                        Some((*level, loc.line))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if found != [(level, Some(line))] {
+                differences.push(format!(
+                    "{rst:?}: docutils 0.22.4 reports ({level}, {line}), ours {found:?}"
+                ));
+            }
+        }
+
+        differences.extend(super::tests::sphinx_read_differences(&[
+            // meta_basic
+            (
+                "Title\n=====\n\n.. meta::\n   :description: The reStructuredText plaintext markup language\n   :keywords: plaintext, markup language\n\nBody.\n",
+                "    <meta content=\"The reStructuredText plaintext markup language\" name=\"description\">\n    <meta content=\"plaintext, markup language\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+                &[],
+            ),
+            // meta_errors
+            (
+                "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n",
+                "    <meta content=\"fine\" name=\"ok\">\n    <system_message level=\"3\" line=\"15\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               :ok: fine\n               trailing paragraph\n    <system_message level=\"3\" line=\"12\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               not a field\n    <system_message level=\"3\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Content block expected for the \"meta\" directive; none found.\n            <literal_block xml:space=\"preserve\">\n                .. meta::\n",
+                &["<SRCDIR>/index.rst:4: ERROR: Content block expected for the \"meta\" directive; none found. [docutils]", "<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".", "", ":description bad: x [docutils]", "<SRCDIR>/index.rst:12: ERROR: Invalid meta directive.", "", ".. meta::", "   not a field [docutils]", "<SRCDIR>/index.rst:15: ERROR: Invalid meta directive.", "", ".. meta::", "   :ok: fine", "   trailing paragraph [docutils]"],
+            ),
+            // meta_line_runs_one_blank
+            (
+                "Para.\n\n.. meta::\n   :d bad: x\n\nPara.\n",
+                "    <system_message level=\"3\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".", "", ":d bad: x [docutils]"],
+            ),
+            // meta_in_section_nested
+            (
+                "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n",
+                "    <meta content=\"nested\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <note>\n",
+                &[],
+            ),
+            // header_in_section
+            (
+                "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n",
+                "    <meta content=\"k\" name=\"keywords\">\n    <decoration>\n        <footer>\n            <paragraph>\n                Deep footer\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n",
+                &[],
+            ),
+            // header_footer_errors
+            (
+                ".. header::\n\n.. footer::\n\nTitle\n=====\n\nBody.\n",
+                "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"header\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. header::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"footer\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. footer::\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+                &["<SRCDIR>/index.rst:1: ERROR: Content block expected for the \"header\" directive; none found. [docutils]", "<SRCDIR>/index.rst:3: ERROR: Content block expected for the \"footer\" directive; none found. [docutils]"],
+            ),
+            // meta_bad_tokens
+            (
+                ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n",
+                "    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
+                &["<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").", "", ":description lang=\"unterminated: x [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".", "", ":description =x: y [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.", "", ":a b=\"c\"d: e [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\": missing value after \"b=\".", "", ":a b=: e [docutils]"],
+            ),
+            // meta_in_list_after_meta
+            (
+                ".. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n",
+                "    <meta content=\"AAAAFIRST\" name=\"a\">\n    <meta content=\"BBBBSECOND\" name=\"b\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+                &[],
+            ),
+        ], true));
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// A `meta` node's attribute names are the user's (`MetaBody.parsemeta`:
+    /// `node[attname.lower()] = val`), and Sphinx keeps every one of them.
+    /// More distinct names than the doctree interner holds
+    /// ([`crate::doctree::MAX_INTERNED`]) are all kept, through the parse
+    /// and through the doctree's encoding, and the interner keeps room for
+    /// the fixed vocabulary: a doctree that needs node kinds and attribute
+    /// keys of this crate's own still decodes, and a string never interned
+    /// before still interns.
+    #[test]
+    fn meta_attribute_names_leave_the_interner_room() {
+        let count = crate::doctree::MAX_INTERNED + 1;
+        let rst: String = std::iter::once(".. meta::\n".to_string())
+            .chain((0..count).map(|n| format!("   :n{n} key{n}=v{n}: c\n")))
+            .collect();
+        let options = ParseOptions {
+            source_path: "<snippet>".into(),
+            sphinx: false,
+            ..Default::default()
+        };
+        let output = parse_rst_full(&rst, &options);
+        let metas = &output.doctree.root.children;
+        assert_eq!(metas.len(), count);
+        for (meta, n) in metas.iter().zip(0..count) {
+            let key = format!("key{n}");
+            let value = crate::doctree::AttrValue::Str(format!("v{n}"));
+            assert!(
+                meta.attrs
+                    .extra
+                    .iter()
+                    .any(|(name, found)| *name == key.as_str() && *found == value),
+                "{key} was dropped"
+            );
+        }
+        let encoded = crate::doctree::to_bincode(&output.doctree);
+        let decoded = crate::doctree::from_bincode(&encoded).expect("the metas decode");
+        assert_eq!(decoded.root, output.doctree.root);
+
+        let fixed = parse_rst_full(
+            "A reference_ and *emphasis*.\n\n.. _reference: https://example.org/\n\n- item\n",
+            &options,
+        );
+        let encoded = crate::doctree::to_bincode(&fixed.doctree);
+        let decoded = crate::doctree::from_bincode(&encoded).expect("the vocabulary decodes");
+        assert_eq!(decoded.root, fixed.doctree.root);
+        assert!(crate::doctree::intern("a string the vocabulary has not met (T18a fix 3)").is_ok());
+    }
+
+    /// A topic, a sidebar or a contents directive may stand in the
+    /// anonymous `Element` docutils' figure parses its content into
+    /// (`SP/docutils/parsers/rst/directives/images.py:163`): the figure's
+    /// legend holds it. A sidebar may hold a contents directive.
+    //
+    // oracle: docutils 0.22.4 (parse layer, as above).
+    #[test]
+    fn pseudo_sections_stand_in_a_figure() {
+        let differences = parse_layer_differences(&[
+            // contents_in_figure
+            (
+                ".. figure:: a.png\n\n   Caption.\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n                <title>\n                    Contents\n                <pending>\n                    .. internal attributes:\n                         .transform: docutils.transforms.parts.Contents\n                         .details:\n",
+                "",
+            ),
+            // topic_in_figure
+            (
+                ".. figure:: a.png\n\n   Caption.\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+                "",
+            ),
+            // sidebar_in_figure
+            (
+                ".. figure:: a.png\n\n   Caption.\n\n   .. sidebar:: S\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <sidebar>\n                <title>\n                    S\n                <paragraph>\n                    Body.\n",
+                "",
+            ),
+            // contents_in_sidebar
+            (
+                ".. sidebar:: S\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            S\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n",
+                "",
+            ),
+        ]);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// The `replace` directive parses its content into an anonymous
+    /// `Element` (`SP/docutils/parsers/rst/directives/misc.py:357-387`),
+    /// which may hold a topic, a sidebar or a contents directive: each runs
+    /// as it would in the document, registering its names and noting its
+    /// pending, and only then does `replace` reject the content as more
+    /// than a single paragraph. A sidebar in that sidebar is still
+    /// rejected, its message reported where the parse creates it.
+    //
+    // oracle: docutils 0.22.4 (parse layer, as above) and Sphinx 9.1.0's
+    //   read with `keep_warnings = True` (scratchpad/t18a-fix3/probes/
+    //   {dparse.py, sread.py}, cases.json and cases2.json). The contents
+    //   row whose Sphinx read the Contents transform (720, wave 5a T18b)
+    //   changes is pinned in docutils mode only. In the docutils rows the
+    //   construct that meets a registered name follows the definition
+    //   without a blank line: docutils' "empty or invalid" message keeps a
+    //   definition's trailing blank lines in its text, which this parser
+    //   does not (an edge of the substitution definition, not of the
+    //   container its content is parsed into).
+    #[test]
+    fn pseudo_sections_stand_in_replace_content() {
+        let mut differences = parse_layer_differences(&[
+            // topic_in_replace
+            (
+                ".. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // sidebar_in_replace
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+            ),
+            // contents_in_replace
+            (
+                ".. |x| replace::\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. contents::\n",
+            ),
+            // topic_in_replace_paragraph_first
+            (
+                ".. |x| replace:: Para\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace:: Para\n            \n               .. topic:: T\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace:: Para\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // topic_in_replace_in_section
+            (
+                "Title\n=====\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"replace\" directive: may contain a single paragraph only.\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Substitution definition \"x\" empty or invalid.\n            <literal_block xml:space=\"preserve\">\n                .. |x| replace::\n                \n                   .. topic:: T\n                \n                      Body.\n",
+                "<snippet>:4: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:4: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // sidebar_in_sidebar_in_replace
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  .. sidebar:: S2\n            \n                     Body.\n",
+                "<snippet>:5: (ERROR/3) The \"sidebar\" directive may not be used within a sidebar element.\n<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+            ),
+            // topic_named_in_replace_then_target
+            (
+                ".. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n.. _tn:\n\nPara.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n                  :name: tn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"tn\".\n    <target dupnames=\"tn\" ids=\"id1\">\n    <paragraph>\n        Para.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n<snippet>:7: (WARNING/2) Duplicate explicit target name: \"tn\".\n",
+            ),
+            // sidebar_named_in_replace_then_target
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n.. _sn:\n\nPara.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n                  :name: sn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"sn\".\n    <target dupnames=\"sn\" ids=\"id1\">\n    <paragraph>\n        Para.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n<snippet>:7: (WARNING/2) Duplicate explicit target name: \"sn\".\n",
+            ),
+            // contents_in_replace_then_contents_adjacent
+            (
+                ".. |x| replace::\n\n   .. contents::\n.. contents::\n\nContents\n========\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n    <topic classes=\"contents\" ids=\"id1\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n    <section dupnames=\"contents\" ids=\"id2\">\n        <title>\n            Contents\n        <system_message backrefs=\"id2\" level=\"1\" line=\"7\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"contents\".\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. contents::\n<snippet>:7: (INFO/1) Duplicate implicit target name: \"contents\".\n",
+            ),
+        ]);
+        differences.extend(super::tests::sphinx_read_differences(
+            &[
+                // topic_in_replace
+                (
+                    ".. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n            \n                  Body.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "", "      Body. [docutils]"],
+                ),
+                // sidebar_in_replace
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  Body.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "", "      Body. [docutils]"],
+                ),
+                // contents_in_replace
+                (
+                    ".. |x| replace::\n\n   .. contents::\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. contents:: [docutils]"],
+                ),
+                // topic_in_replace_in_section
+                (
+                    "Title\n=====\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Error in \"replace\" directive: may contain a single paragraph only.\n        <system_message level=\"2\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n            <paragraph>\n                Substitution definition \"x\" empty or invalid.\n            <literal_block xml:space=\"preserve\">\n                .. |x| replace::\n                \n                   .. topic:: T\n                \n                      Body.\n",
+                    &["<SRCDIR>/index.rst:4: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:4: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "", "      Body. [docutils]"],
+                ),
+                // sidebar_in_sidebar_in_replace
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  .. sidebar:: S2\n            \n                     Body.\n",
+                    &["<SRCDIR>/index.rst:5: ERROR: The \"sidebar\" directive may not be used within a sidebar element. [docutils]", "<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "", "      .. sidebar:: S2", "", "         Body. [docutils]"],
+                ),
+                // topic_named_in_replace
+                (
+                    ".. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n\n.. _tn:\n\nPara.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n                  :name: tn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"8\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"tn\".\n    <target dupnames=\"tn\" refid=\"id1\">\n    <paragraph ids=\"id1\">\n        Para.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "      :name: tn", "", "      Body. [docutils]", "<SRCDIR>/index.rst:8: WARNING: Duplicate explicit target name: \"tn\". [docutils]"],
+                ),
+                // sidebar_named_in_replace_then_target
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n.. _sn:\n\nPara.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n                  :name: sn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"sn\".\n    <target dupnames=\"sn\" refid=\"id1\">\n    <paragraph ids=\"id1\">\n        Para.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "      :name: sn", "", "      Body. [docutils]", "<SRCDIR>/index.rst:7: WARNING: Duplicate explicit target name: \"sn\". [docutils]"],
+                ),
+            ],
+            true,
+        ));
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// Sphinx's extra directives ([SD §3.9], wave 5a T18c), read as Sphinx
+    /// 9.1.0 reads them: `cssclass` is docutils' `class`, as `rst-class`
+    /// is; the `version-*` spellings are `VersionChange` under their
+    /// unhyphenated type; `sectionauthor`, `moduleauthor` and `codeauthor`
+    /// give nothing, `show_authors` being off; `tabularcolumns` leaves a
+    /// `tabular_col_spec`; `centered` inline-parses its argument at its
+    /// line, its messages after it; `acks` holds its content when that is
+    /// one bullet list, and logs `.. acks content is not a list` at its
+    /// line otherwise, the content dropped and its registrations kept; and
+    /// the std domain's `productionlist`, in both spellings, makes one
+    /// `production` per line up to the first without a colon, each name
+    /// a `grammar-token-…` target noted as a std `token` object, which a
+    /// duplicate names, and each backquoted token a `pending_xref`. None
+    /// of them is known to a docutils parse. The `acks` warning is located
+    /// by docname, which the source directory and `index.rst` spell.
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness
+    //   with `keep_warnings = True` (scratchpad/t18c/probes/sread.py over
+    //   cases1.json), and docutils 0.22.4's parse layer for the docutils
+    //   row (scratchpad/t18c/probes/dparse.py over dcases.json).
+    #[test]
+    fn sphinx_extra_directives_match_probe() {
+        let mut differences = parse_layer_differences(&[
+            // extras_unknown_in_docutils
+            (
+                ".. cssclass:: x\n\n.. centered:: c\n\n.. productionlist:: a: b\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"cssclass\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"cssclass\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"cssclass\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n    <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"centered\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"centered\" as canonical directive name.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"centered\".\n        <literal_block xml:space=\"preserve\">\n            .. centered:: c\n    <system_message level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"productionlist\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"productionlist\" as canonical directive name.\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"productionlist\".\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n",
+                "<snippet>:1: (INFO/1) No directive entry for \"cssclass\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"cssclass\" as canonical directive name.\n<snippet>:1: (ERROR/3) Unknown directive type \"cssclass\".\n\n.. cssclass:: x\n\n<snippet>:3: (INFO/1) No directive entry for \"centered\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"centered\" as canonical directive name.\n<snippet>:3: (ERROR/3) Unknown directive type \"centered\".\n\n.. centered:: c\n\n<snippet>:5: (INFO/1) No directive entry for \"productionlist\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"productionlist\" as canonical directive name.\n<snippet>:5: (ERROR/3) Unknown directive type \"productionlist\".\n\n.. productionlist:: a: b\n",
+            ),
+        ]);
+        let index = std::path::Path::new("<SRCDIR>").join("index.rst");
+        let not_a_list = |line: u32| {
+            format!(
+                "{}:{line}: WARNING: .. acks content is not a list",
+                index.display()
+            )
+        };
+        let (acks_at_1, acks_at_4) = (not_a_list(1), not_a_list(4));
+        differences.extend(super::tests::sphinx_read_differences(
+            &[
+                // cssclass_pending
+                (
+                    "Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+                    &[],
+                ),
+                // cssclass_content
+                (
+                    ".. cssclass:: a B\n\n   Para one.\n\n   Para two.\n",
+                    "    <paragraph classes=\"a b\">\n        Para one.\n    <paragraph classes=\"a b\">\n        Para two.\n",
+                    &[],
+                ),
+                // cssclass_invalid
+                (
+                    ".. cssclass:: !!!\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"cssclass\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Invalid class attribute value for \"cssclass\" directive: \"!!!\". [docutils]"],
+                ),
+                // cssclass_last
+                (
+                    "Para.\n\n.. cssclass:: x\n",
+                    "    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following \"cssclass\" directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+                    &["<SRCDIR>/index.rst:3: ERROR: No suitable element following \"cssclass\" directive", "", ".. cssclass:: x [docutils]"],
+                ),
+                // cssclass_upper
+                (
+                    ".. CSSClass:: up\n\nPara.\n",
+                    "    <paragraph classes=\"up\">\n        Para.\n",
+                    &[],
+                ),
+                // version_added_alias
+                (
+                    ".. version-added:: 1.2\n\n   Some text.\n",
+                    "    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some text.\n",
+                    &[],
+                ),
+                // version_changed_alias
+                (
+                    ".. version-changed:: 2.0 Inline *text*.\n",
+                    "    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Inline \n            <emphasis>\n                text\n            .\n",
+                    &[],
+                ),
+                // version_deprecated_alias
+                (
+                    ".. version-deprecated:: 3.0\n",
+                    "    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0.\n",
+                    &[],
+                ),
+                // version_removed_alias
+                (
+                    ".. version-removed:: 4.0\n\n   * a list first\n",
+                    "    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    a list first\n",
+                    &[],
+                ),
+                // version_alias_no_arg
+                (
+                    ".. version-added::\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"version-added\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"version-added\" directive:", "1 argument(s) required, 0 supplied.", "", ".. version-added:: [docutils]"],
+                ),
+                // authors
+                (
+                    ".. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n",
+                    "    <paragraph>\n        Para.\n",
+                    &[],
+                ),
+                // authors_errors
+                (
+                    ".. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectionauthor\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"codeauthor\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"sectionauthor\" directive:", "1 argument(s) required, 0 supplied.", "", ".. sectionauthor:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"codeauthor\" directive:", "no content permitted.", "", ".. codeauthor:: X", "", "   content [docutils]"],
+                ),
+                // tabularcolumns
+                (
+                    ".. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n",
+                    "    <tabular_col_spec spec=\"|l|L|\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n",
+                    &[],
+                ),
+                // tabularcolumns_multiline
+                (
+                    ".. tabularcolumns:: |l|\n   L|   \n",
+                    "    <tabular_col_spec spec=\"|l|\nL|\">\n",
+                    &[],
+                ),
+                // tabularcolumns_errors
+                (
+                    ".. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"tabularcolumns\" directive:", "1 argument(s) required, 0 supplied.", "", ".. tabularcolumns:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"tabularcolumns\" directive:", "no content permitted.", "", ".. tabularcolumns:: |l|", "", "   content [docutils]"],
+                ),
+                // centered
+                (
+                    ".. centered:: Centered *text* here\n",
+                    "    <centered>\n        Centered \n        <emphasis>\n            text\n         here\n",
+                    &[],
+                ),
+                // centered_problem
+                (
+                    ".. centered:: *unclosed and `bad\n\nAfter.\n",
+                    "    <centered>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `\n        bad\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Inline interpreted text or phrase reference start-string without end-string.\n    <paragraph>\n        After.\n",
+                    &["<SRCDIR>/index.rst:1: WARNING: Inline emphasis start-string without end-string. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Inline interpreted text or phrase reference start-string without end-string. [docutils]"],
+                ),
+                // centered_errors
+                (
+                    ".. centered::\n\n.. centered:: x\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"centered\" directive:", "1 argument(s) required, 0 supplied.", "", ".. centered:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"centered\" directive:", "no content permitted.", "", ".. centered:: x", "", "   content [docutils]"],
+                ),
+                // centered_multiline
+                (
+                    ".. centered:: line one\n   line two\n",
+                    "    <centered>\n        line one\n        line two\n",
+                    &[],
+                ),
+                // acks
+                (
+                    ".. acks::\n\n   * Alice\n   * Bob *the builder*\n",
+                    "    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    Alice\n            <list_item>\n                <paragraph>\n                    Bob \n                    <emphasis>\n                        the builder\n",
+                    &[],
+                ),
+                // acks_not_a_list
+                (
+                    "Title\n=====\n\n.. acks::\n\n   not a list\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+                    &[acks_at_4.as_str()],
+                ),
+                // acks_empty
+                (
+                    ".. acks::\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_two_lists
+                (
+                    ".. acks::\n\n   * a\n\n   - b\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_enumerated
+                (
+                    ".. acks::\n\n   1. a\n   2. b\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_target_kept
+                (
+                    ".. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n",
+                    "    <paragraph>\n        See \n        <reference name=\"t\" refid=\"t\">\n            t\n        .\n",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_problem_in_item
+                (
+                    ".. acks::\n\n   * *unclosed\n",
+                    "    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    <problematic ids=\"id2\" refid=\"id1\">\n                        *\n                    unclosed\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n",
+                    &["<SRCDIR>/index.rst:3: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+                ),
+                // acks_option
+                (
+                    ".. acks:: arg\n\n   * a\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // productionlist
+                (
+                    ".. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: \"try\" \":\" `suite`\n            : (\"except\" [`expression` [\"as\" `identifier`]] \":\" `suite`)+\n",
+                    "    <productionlist>\n        <production tokenname=\"try_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try_stmt\">\n                try_stmt\n              ::= \n            <pending_xref refdomain=\"std\" reftarget=\"try1_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try1_stmt\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"try2_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try2_stmt\n            \n        <production tokenname=\"try1_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try1_stmt\">\n                try1_stmt\n             ::= \n            \"try\" \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                          \n            (\"except\" [\n            <pending_xref refdomain=\"std\" reftarget=\"expression\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    expression\n             [\"as\" \n            <pending_xref refdomain=\"std\" reftarget=\"identifier\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    identifier\n            ]] \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            )+\n            \n",
+                    &[],
+                ),
+                // productionlist_group
+                (
+                    ".. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: \"x\"\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"mygroup:b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"other:c\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    other:c\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"grp:d\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    d\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"e\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    e\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-b\">\n                b\n             ::= \n            \"x\"\n            \n",
+                    &[],
+                ),
+                // productionlist_nl_escape
+                (
+                    ".. productionlist::\n   a: b \\\n      c\n   d: e\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b    c\n            \n        <production tokenname=\"d\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-d\">\n                d\n             ::= \n            e\n            \n",
+                    &[],
+                ),
+                // productionlist_stop
+                (
+                    ".. productionlist::\n   a: b\n   no colon here\n   c: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_dup
+                (
+                    ".. productionlist::\n   a: b\n   a: c\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                a\n             ::= \n            c\n            \n",
+                    &["<SRCDIR>/index.rst:1: WARNING: duplicate token description of a, other instance in index"],
+                ),
+                // productionlist_names
+                (
+                    ".. productionlist::\n   Foo Bar: x\n   été: y\n   !!!: z\n   ???: w\n",
+                    "    <productionlist>\n        <production tokenname=\"Foo Bar\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-Foo-Bar\">\n                Foo Bar\n             ::= \n            x\n            \n        <production tokenname=\"été\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-ete\">\n                été\n                 ::= \n            y\n            \n        <production tokenname=\"!!!\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token\">\n                !!!\n                 ::= \n            z\n            \n        <production tokenname=\"???\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                ???\n                 ::= \n            w\n            \n",
+                    &[],
+                ),
+                // productionlist_std_prefix
+                (
+                    ".. std:productionlist::\n   a: b\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_marker_line
+                (
+                    ".. productionlist:: a: `b`\n   b: c\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-b\">\n                b\n             ::= \n            c\n            \n",
+                    &[],
+                ),
+                // productionlist_errors
+                (
+                    ".. productionlist::\n\n.. productionlist:: a: b\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"productionlist\" directive:", "1 argument(s) required, 0 supplied.", "", ".. productionlist:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"productionlist\" directive:", "no content permitted.", "", ".. productionlist:: a: b", "", "   content [docutils]"],
+                ),
+                // productionlist_tokens
+                (
+                    ".. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `é`\n",
+                    "    <productionlist>\n        <production tokenname=\"x\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-x\">\n                x\n             ::= \n            `a b` `-c` `a-b` \n            <pending_xref refdomain=\"std\" reftarget=\"_x\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    _x\n             \n            <pending_xref refdomain=\"std\" reftarget=\"1\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    1\n             `~y` \n            <pending_xref refdomain=\"std\" reftarget=\":z\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    z\n             `g:` `:` \n            <pending_xref refdomain=\"std\" reftarget=\"é\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    é\n            \n",
+                    &[],
+                ),
+                // productionlist_empty_names
+                (
+                    ".. productionlist::\n   : a\n   : b\n",
+                    "    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            a\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_in_note
+                (
+                    ".. note::\n\n   .. productionlist::\n      a: b\n",
+                    "    <note>\n        <productionlist>\n            <production tokenname=\"a\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-a\">\n                    a\n                 ::= \n                b\n                \n",
+                    &[],
+                ),
+                // productionlist_upper
+                (
+                    ".. ProductionList::\n   a: b\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
+                ),
+            ],
+            true,
+        ));
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// `make_id` (`SP/sphinx/util/nodes.py:610-637`) formats an id with
+    /// Python's `%`, `(prefix + '-%s') % term`, and the std domain puts a
+    /// production group and a program name into the prefix
+    /// (`SP/sphinx/domains/std/__init__.py:686-687`, `:296-303`). A doubled
+    /// `%` formats as one `%`, which `_make_id` turns into a hyphen in the
+    /// candidate id and the serial fallback, `idformat % serial`, keeps
+    /// (`grammar-token-p%q-0`), the serial counted under the prefix as
+    /// written; a `%` in the name is data; and a group that no named
+    /// production formats raises nothing, its `%` kept in the productions'
+    /// references. An undoubled `%` raises at the first named production or
+    /// option (`tests/e2e_cli.rs` `a_percent_in_an_id_prefix_exits_two`).
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness
+    //   with `keep_warnings = True` (scratchpad/t18c/fix1/sread.py over
+    //   pct_read.json).
+    #[test]
+    fn a_percent_in_an_id_prefix_reads_like_sphinx() {
+        let differences = super::tests::sphinx_read_differences(
+            &[
+                // productionlist_doubled_percent_group
+                (
+                    ".. productionlist:: p%%q\n   a: b\n   a: c\n   a: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p-q-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p%q-0\">\n                a\n             ::= \n            c\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p%q-1\">\n                a\n             ::= \n            d\n            \n",
+                    &["<SRCDIR>/index.rst:1: WARNING: duplicate token description of p%%q:a, other instance in index", "<SRCDIR>/index.rst:1: WARNING: duplicate token description of p%%q:a, other instance in index"],
+                ),
+                // productionlist_percent_group_unnamed_only
+                (
+                    ".. productionlist:: 100%\n   : x `y`\n",
+                    "    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            x \n            <pending_xref refdomain=\"std\" reftarget=\"100%:y\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    y\n            \n",
+                    &[],
+                ),
+                // productionlist_percent_in_names
+                (
+                    ".. productionlist:: g\n   a%b: c\n   a%%b: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a%b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-g-a-b\">\n                a%b\n              ::= \n            c\n            \n        <production tokenname=\"a%%b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-g-0\">\n                a%%b\n             ::= \n            d\n            \n",
+                    &[],
+                ),
+                // option_doubled_percent_program
+                (
+                    ".. program:: p%%q\n\n.. option:: -a\n\n.. option:: -a\n\n.. option:: x\n\n.. option:: x\n",
+                    "    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ -a',\\ 'cmdoption-p-q-a',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-a\" classes=\"sig sig-object\" ids=\"cmdoption-p-q-a\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -a\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ -a',\\ 'cmdoption-p%q-0',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-a\" classes=\"sig sig-object\" ids=\"cmdoption-p%q-0\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -a\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ x',\\ 'cmdoption-p-q-arg-x',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"x\" classes=\"sig sig-object\" ids=\"cmdoption-p-q-arg-x\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ x',\\ 'cmdoption-p%q-arg-0',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"x\" classes=\"sig sig-object\" ids=\"cmdoption-p%q-arg-0\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n",
+                    &[],
+                ),
+            ],
+            true,
+        );
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }

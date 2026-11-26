@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
 use crate::diagnostics::Diagnostic;
 use crate::doctree::Doctree;
@@ -48,15 +49,20 @@ pub(crate) fn index_rst() -> ParseOptions {
 }
 
 /// The read-state fixture's read settings (M1's validation off, smart
-/// quotes off, the id trace on), with `keep_warnings` as given.
+/// quotes off, the dummy builder, the id trace on), with `keep_warnings`
+/// as given.
 pub(crate) fn harness_settings(keep_warnings: bool) -> ReadSettings {
     ReadSettings {
         trace_ids: true,
-        ..ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            keep_warnings,
-            ..BuildConfig::default()
-        })
+        ..ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                keep_warnings,
+                smartquotes: false,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 }
 
@@ -229,15 +235,32 @@ pub(crate) struct Resolved {
 /// resolves them, the later post-transforms left out: the dummy builder's
 /// `''` URIs, `numfig` off, no intersphinx, not nitpicky.
 pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
+    resolved_with(
+        project,
+        docname,
+        crate::env::math::MathConfig::default(),
+        &Intersphinx::default(),
+    )
+}
+
+/// [`resolved`] under the math domain's configuration `math`, with the
+/// loaded intersphinx state `intersphinx` (its `intersphinx_resolve_self`,
+/// for one).
+pub(crate) fn resolved_with(
+    project: &Project,
+    docname: &str,
+    math: crate::env::math::MathConfig,
+    intersphinx: &Intersphinx,
+) -> Resolved {
     let formats = BTreeMap::new();
-    let intersphinx = Intersphinx::default();
     let resolver = Resolver {
         env: &project.env,
         numfig: false,
         numfig_format: &formats,
+        math,
         doctree: &|_| None,
         relative_uri: &|_, _| String::new(),
-        intersphinx: &intersphinx,
+        intersphinx,
     };
     let nitpick = NitpickConfig {
         nitpicky: false,

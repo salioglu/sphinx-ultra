@@ -18,7 +18,8 @@
 //!   which merge the document into the build environment, one document at
 //!   a time in sorted docname order.
 //!
-//! A row nothing ports yet runs as an explicit no-op
+//! A row that is inert in a default build, or that stage M runs against
+//! the environment itself, runs as an explicit no-op
 //! ([`TransformId::transform`]).
 //!
 //! The post-transforms a builder applies as it writes a document, after
@@ -28,9 +29,11 @@
 pub mod footnotes;
 pub mod location;
 pub mod misc;
+pub mod parts;
 pub mod post;
 pub mod references;
 pub mod reporter;
+pub mod smartquotes;
 pub mod sphinx;
 pub mod state;
 pub mod tags;
@@ -46,7 +49,7 @@ use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::citation as env_citation;
-use crate::env::collectors::images;
+use crate::env::collectors::{downloads, images};
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::math as env_math;
@@ -235,12 +238,12 @@ impl TransformId {
     }
 
     /// The transform the read runs for this row: its port, or an explicit
-    /// no-op for a row that is inert in a default build, not ported yet
-    /// (the comment names the task that ports it), or run against the
+    /// no-op for a row that is inert in a default build or run against the
     /// environment by stage M itself ([`run_merge_transforms`]).
     pub(crate) fn transform(self) -> &'static dyn Transform {
         match self {
             TransformId::ApplySourceWorkaround => &sphinx::ApplySourceWorkaround,
+            TransformId::PreserveTranslatableMessages => &sphinx::PreserveTranslatableMessages,
             TransformId::TranslationProgressTotaliser => &sphinx::TranslationProgressTotaliser,
             TransformId::DefaultSubstitutions => &sphinx::DefaultSubstitutions,
             TransformId::MoveModuleTargets => &sphinx::MoveModuleTargets,
@@ -258,6 +261,7 @@ impl TransformId {
             TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
             TransformId::GlossarySorter => &sphinx::GlossarySorter,
+            TransformId::TargetNotes => &references::TargetNotes,
             // The 619 rows' tree halves; stage M runs their environment
             // halves ([`run_merge_transforms`]).
             TransformId::CitationDefinitionTransform => &footnotes::CitationDefinitionTransform,
@@ -267,19 +271,21 @@ impl TransformId {
             TransformId::ExternalTargets => &references::ExternalTargets,
             TransformId::InternalTargets => &references::InternalTargets,
             TransformId::FootnoteDocnameUpdater => &footnotes::FootnoteDocnameUpdater,
+            TransformId::SectNum => &parts::SectNum,
+            TransformId::Contents => &parts::Contents,
+            TransformId::SphinxSmartQuotes => &smartquotes::SphinxSmartQuotes,
             TransformId::Transitions => &misc::Transitions,
             TransformId::SphinxDanglingReferences => &references::SphinxDanglingReferences,
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
 
             // Inert with `extensions = []` and Sphinx's defaults ([TW §2.2]):
-            // no message catalogs or gettext builder (010-019, 010-034,
-            // 020, 880-041, 950, 999-038), `html_compact_lists` on (100),
-            // no 4-tuple index entries (210-026), `doctitle_xform` and
+            // no message catalogs or gettext builder (010-019, 020, 880-041,
+            // 950, 999-038), `html_compact_lists` on (100), no 4-tuple
+            // index entries (210-026), `doctitle_xform` and
             // `sectsubtitle_xform` off (320, 350), no `strip_comments`
             // (740), no header or footer (820), `validate` off (835), and
             // nothing to expose (840).
             TransformId::ExtraTranslatableNodes
-            | TransformId::PreserveTranslatableMessages
             | TransformId::Locale
             | TransformId::RefOnlyBulletListTransform
             | TransformId::AutoIndexUpgrader
@@ -292,11 +298,6 @@ impl TransformId {
             | TransformId::UIDTransform
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
-
-            // T16b.
-            TransformId::SphinxSmartQuotes => &NoOp,
-            // T18b.
-            TransformId::TargetNotes | TransformId::SectNum | TransformId::Contents => &NoOp,
 
             // Stage M runs these two against the environment itself.
             TransformId::SphinxDomains | TransformId::DoctreeReadEvent => &NoOp,
@@ -594,7 +595,20 @@ impl TransformCx<'_> {
     /// there (not the reporter's `source:0`); `<unknown>:line` with a line
     /// and no source; and nowhere, a bare record, with neither.
     pub fn warn(&mut self, node: TxId, message: String, category: Category) {
-        let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
+        let location = node_location(self.tree, node, self.state, self.srcdir);
+        self.warn_at(location, message, category);
+    }
+
+    /// Sphinx's `logger.warning(message, type=…, subtype=…)` with no
+    /// `location` while this transform applies: [`Self::warn`]'s record,
+    /// bare.
+    pub fn warn_unlocated(&mut self, message: String, category: Category) {
+        self.warn_at(Location::None, message, category);
+    }
+
+    /// The WARNING record [`Self::warn`] and [`Self::warn_unlocated`] log,
+    /// at `location`.
+    fn warn_at(&mut self, location: Location, message: String, category: Category) {
         let seq = self.state.draw_seq();
         self.state.log.push(LogRecord::Logger {
             key: self.key.order_key(seq),
@@ -605,6 +619,26 @@ impl TransformCx<'_> {
                 category,
             },
         });
+    }
+
+    /// Raises `crash`, an exception Sphinx 9.1.0 raises out of this
+    /// transform (decision 13), located where Sphinx's `get_node_location`
+    /// locates `node` ([`node_location`]): the read stops after this
+    /// transform, which returns at once, as Sphinx's does
+    /// ([`DocumentState::raise`]).
+    pub fn crash(&mut self, crash: crate::rst::SphinxCrash, node: TxId) {
+        let location = node_location(self.tree, node, self.state, self.srcdir);
+        self.state.raise(
+            crash.rendered_at(location),
+            self.key.priority,
+            self.key.serial,
+        );
+    }
+
+    /// Whether this read has crashed ([`Self::crash`]): a transform that
+    /// raised in a helper returns at once.
+    pub fn crashed(&self) -> bool {
+        self.state.crash.is_some()
     }
 
     /// docutils `document.set_id(node)` for a node without ids, as every
@@ -635,21 +669,20 @@ impl TransformCx<'_> {
 /// Sphinx's `get_node_location(node)` (`SP/sphinx/util/logging.py:554-562`)
 /// for the node at `node`, the location a `location=node` warning prints:
 /// docutils' location for it ([`location::get_source_line`]), as
-/// `abspath(source):line` ([`LogLocation::Node`]), or `abspath(source):`
-/// when the line is missing or 0, which is falsy there; `<unknown>:line`
-/// with a line and no source; and none with neither.
+/// `abspath(source):line` ([`LogLocation::render_node`]), or
+/// `abspath(source):` when the line is missing or 0, which is falsy there;
+/// `<unknown>:line` with a line and no source; and none with neither.
 pub(crate) fn node_location(
     tree: &TxTree,
     node: TxId,
     state: &DocumentState,
     srcdir: &Path,
-    docname: &str,
 ) -> Location {
     let loc = location::get_source_line(tree, node, state);
     let line = loc.line.unwrap_or(0);
     match loc.source {
         Some(SourceRef::Table(source)) => {
-            LogLocation::Node { source, line }.render(tree.sources(), srcdir, docname)
+            LogLocation::render_node(tree.sources(), srcdir, source, line)
         }
         None if line != 0 => Location::Verbatim(format!("<unknown>:{line}")),
         None => Location::None,
@@ -701,7 +734,9 @@ fn apply(
 /// subtree: whatever checks the parse's registrations against the tree
 /// ([`DocumentState::registries_dump`],
 /// [`DocumentState::misplaced_registrations`]) reads the parse's state,
-/// before this stage.
+/// before this stage. The Text escape data the parse kept for the stage's
+/// transforms, SmartQuotes (750) the last of them, is dropped when the
+/// stage ends ([`smartquotes::clear_raw`]).
 ///
 /// With the id trace on, the stage ends by tagging the trace's events
 /// ([`tag_trace`]): stage M can still take a node out of the tree, so
@@ -735,10 +770,13 @@ pub(crate) fn read_transforms_with(
         toctrees,
         registry,
         mut state,
+        roles_after,
     } = parsed;
     let mut tree = TxTree::from_parse(doctree, &mut state);
     for (key, id) in schedule(&state) {
-        if key >= SPHINX_DOMAINS {
+        // Sphinx's read stops where it raises (decision 13): no transform
+        // runs after a parse that crashed, and none after one that did.
+        if key >= SPHINX_DOMAINS || state.crash.is_some() {
             break;
         }
         apply(
@@ -751,14 +789,17 @@ pub(crate) fn read_transforms_with(
         );
     }
     tag_trace(&mut tree, &mut state);
+    let mut doctree = tree.into_doctree();
+    smartquotes::clear_raw(&mut doctree.root);
     ReadOutcome {
         output: ParseOutput {
-            doctree: tree.into_doctree(),
+            doctree,
             directive_records,
             role_records,
             toctrees,
             registry,
             state,
+            roles_after,
         },
     }
 }
@@ -863,7 +904,7 @@ pub fn run_merge_transforms(
                 );
             }
             TransformId::SphinxDomains => {
-                let label_locations = duplicate_label_locations(&mut doc, env, docname, inputs);
+                let label_locations = duplicate_label_locations(&mut doc, env, inputs);
                 let output = doc.output();
                 output.state.ids.set_phase(id.python_name().to_string());
                 sphinx_domains(output, env, docname, inputs, &label_locations, &mut records);
@@ -908,7 +949,6 @@ const PARSE: TransformKey = TransformKey::at(0, 0);
 fn duplicate_label_locations(
     doc: &mut MergeDocument<'_>,
     env: &BuildEnvironment,
-    docname: &str,
     inputs: &MergeInputs<'_>,
 ) -> HashMap<String, Location> {
     let ids: Vec<String> = doc
@@ -936,7 +976,7 @@ fn duplicate_label_locations(
                 node = real;
             }
         }
-        let location = node_location(tree, node, state, inputs.source_dir, docname);
+        let location = node_location(tree, node, state, inputs.source_dir);
         locations.insert(id, location);
     }
     locations
@@ -1001,7 +1041,8 @@ impl MergeDocument<'_> {
 ///    logs its records there, keyed `(880, 30, seq)`; a document without
 ///    an `image` node, which leaves it nothing to do, is not converted for
 ///    it;
-/// 3. DownloadFile (T17c);
+/// 3. DownloadFile, over the arena too ([`downloads::process_doc`]), keyed
+///    the same way, for a document with a `download_reference` node;
 /// 4. Metadata, which pops the docinfo out of the tree
 ///    ([`env_metadata::process_doc`]), so that the domains (850) and the
 ///    collectors before it see the docinfo and the two after it do not;
@@ -1025,9 +1066,21 @@ fn doctree_read_event(
         &output.registry.dependencies,
     );
 
-    if has_image(&output.doctree.root) {
+    // Neither collector adds or removes the other's nodes.
+    let with_images = has_kind(&output.doctree.root, kinds::IMAGE);
+    let with_downloads = has_kind(&output.doctree.root, kinds::DOWNLOAD_REFERENCE);
+    for (run, process_doc) in [
+        (
+            with_images,
+            images::process_doc as fn(&mut TransformCx<'_>, &mut BuildEnvironment),
+        ),
+        (with_downloads, downloads::process_doc),
+    ] {
+        if !run {
+            continue;
+        }
         let (tree, state) = doc.arena();
-        images::process_doc(
+        process_doc(
             &mut TransformCx {
                 tree,
                 state,
@@ -1045,10 +1098,10 @@ fn doctree_read_event(
     let doctree = &output.doctree;
 
     let title = env_toctree::document_title(doctree);
-    // Sphinx's longtitle differs from the title only for documents carrying
-    // an explicit `title` attribute, which nothing produces yet
-    // (`collectors/title.py:27`).
-    env.longtitles.insert(docname.to_string(), title.clone());
+    // The longtitle is the title, unless the document carries the `title`
+    // directive's attribute (`collectors/title.py:43-47`).
+    let longtitle = env_toctree::document_longtitle(doctree).unwrap_or_else(|| title.clone());
+    env.longtitles.insert(docname.to_string(), longtitle);
     env.titles.insert(docname.to_string(), title);
 
     let (toc, num_entries) = env_toctree::build_toc(doctree, docname);
@@ -1085,9 +1138,9 @@ fn doctree_read_event(
     }
 }
 
-/// Whether the tree under `node` holds an `image` node.
-fn has_image(node: &Node) -> bool {
-    node.kind == kinds::IMAGE || node.children.iter().any(has_image)
+/// Whether the tree under `node` holds a node of `kind`.
+fn has_kind(node: &Node, kind: &str) -> bool {
+    node.kind == kind || node.children.iter().any(|child| has_kind(child, kind))
 }
 
 /// 850-040 `SphinxDomains`: the domains' `process_doc`, in the order
@@ -1181,6 +1234,7 @@ fn sphinx_domains(
 mod tests {
     use super::*;
     use crate::doctree::pending::PendingTransform;
+    use crate::transforms::test_support::{differences, SphinxRead};
     use state::PendingRecord;
 
     /// `"<priority>-<serial> <python name>"`, as docutils spells a
@@ -1413,5 +1467,114 @@ mod tests {
                 "999-038 sphinx.transforms.i18n.RemoveTranslatableInline",
             ]
         );
+    }
+
+    /// The read-state fixture's `state.pending_serials`: a document whose
+    /// `.. contents::`, `.. sectnum::`, `.. rst-class::` and
+    /// `.. target-notes::` defer to pending nodes. Each runs at its
+    /// priority after the statics of that priority, so TargetNotes (540)
+    /// takes `id3` and `id4` before Contents (720) takes `id5` to `id7`,
+    /// and SectNum (710) numbers the titles before Contents copies them
+    /// into its entries, whose lists are therefore `auto-toc`. The
+    /// anonymous reference with an embedded URI is no anonymous reference
+    /// to TargetNotes (it has a `refuri` and no `anonymous`), and the
+    /// footnote reference in a title is no part of its entry.
+    //
+    // oracle: tests/fixtures/read_state_differential.json, case
+    //   `state.pending_serials` (Sphinx 9.1.0, docutils 0.22.4).
+    #[test]
+    fn pending_serials() {
+        let rows = [
+            // pending_serials
+            SphinxRead {
+                rst: "Doc\n===\n\n.. contents::\n\n.. sectnum::\n\n.. rst-class:: \
+                         special\n\nSec A [#]_\n----------\n\nSee `Python \
+                         <https://python.org>`_ and Docs_ and `anon \
+                         <https://anon.example>`__.\n\n.. _Docs: \
+                         https://docs.example\n\nSec B\n-----\n\n.. [#] note\n\n.. \
+                         target-notes::\n",
+                body: "    <section ids=\"doc\" names=\"doc\">\n        <title auto=\"1\" \
+                          refid=\"id5\">\n            <generated \
+                          classes=\"sectnum\">\n                \
+                          1\u{a0}\u{a0}\u{a0}\n            Doc\n        <topic \
+                          classes=\"contents\" ids=\"contents\" \
+                          names=\"contents\">\n            <title>\n                \
+                          Contents\n            <bullet_list \
+                          classes=\"auto-toc\">\n                \
+                          <list_item>\n                    \
+                          <paragraph>\n                        <reference ids=\"id5\" \
+                          refid=\"doc\">\n                            <generated \
+                          classes=\"sectnum\">\n                                \
+                          1\u{a0}\u{a0}\u{a0}\n                            \
+                          Doc\n                    <bullet_list \
+                          classes=\"auto-toc\">\n                        \
+                          <list_item>\n                            \
+                          <paragraph>\n                                <reference \
+                          ids=\"id6\" refid=\"sec-a\">\n                                    \
+                          <generated \
+                          classes=\"sectnum\">\n                                        \
+                          1.1\u{a0}\u{a0}\u{a0}\n                                    Sec A \
+                          \n                        \
+                          <list_item>\n                            \
+                          <paragraph>\n                                <reference \
+                          ids=\"id7\" refid=\"sec-b\">\n                                    \
+                          <generated \
+                          classes=\"sectnum\">\n                                        \
+                          1.2\u{a0}\u{a0}\u{a0}\n                                    Sec \
+                          B\n        <section classes=\"special\" ids=\"sec-a\" \
+                          names=\"sec\\ a\">\n            <title auto=\"1\" \
+                          refid=\"id6\">\n                <generated \
+                          classes=\"sectnum\">\n                    \
+                          1.1\u{a0}\u{a0}\u{a0}\n                Sec A \n                \
+                          <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" \
+                          refid=\"id2\">\n                    1\n            \
+                          <paragraph>\n                See \n                <reference \
+                          name=\"Python\" \
+                          refuri=\"https://python.org\">\n                    \
+                          Python\n                <target ids=\"python\" names=\"python\" \
+                          refuri=\"https://python.org\">\n                 and \
+                          \n                <reference name=\"Docs\" \
+                          refuri=\"https://docs.example\">\n                    \
+                          Docs\n                 \n                <footnote_reference \
+                          auto=\"1\" docname=\"index\" ids=\"id4\" \
+                          refid=\"id3\">\n                    2\n                 and \
+                          \n                <reference name=\"anon\" \
+                          refuri=\"https://anon.example\">\n                    \
+                          anon\n                .\n            <target ids=\"docs\" \
+                          names=\"docs\" refuri=\"https://docs.example\">\n        <section \
+                          ids=\"sec-b\" names=\"sec\\ b\">\n            <title auto=\"1\" \
+                          refid=\"id7\">\n                <generated \
+                          classes=\"sectnum\">\n                    \
+                          1.2\u{a0}\u{a0}\u{a0}\n                Sec B\n            \
+                          <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" \
+                          ids=\"id2\" names=\"1\">\n                \
+                          <label>\n                    1\n                \
+                          <paragraph>\n                    note\n            <footnote \
+                          auto=\"1\" backrefs=\"id4\" docname=\"index\" ids=\"id3\" \
+                          names=\"TARGET_NOTE:\\ id3\">\n                \
+                          <label>\n                    2\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://docs.example\">\n                        \
+                          https://docs.example\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "doc", true),
+                    ("parse", "topic", "contents", true),
+                    ("parse", "footnote_reference", "id1", true),
+                    ("parse", "section", "sec-a", true),
+                    ("parse", "target", "python", true),
+                    ("parse", "target", "docs", true),
+                    ("parse", "section", "sec-b", true),
+                    ("parse", "footnote", "id2", true),
+                    ("TargetNotes", "footnote", "id3", true),
+                    ("TargetNotes", "footnote_reference", "id4", true),
+                    ("Contents", "reference", "id5", true),
+                    ("Contents", "reference", "id6", true),
+                    ("Contents", "reference", "id7", true),
+                ],
+            },
+        ];
+        let differences = differences(&rows);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }

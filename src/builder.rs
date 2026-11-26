@@ -28,6 +28,7 @@ use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
 use crate::read::{merge_document, MergeInputs, ReadOutcome, ReadSettings};
+use crate::rst::SphinxCrash;
 use crate::transforms::post;
 use crate::transforms::tags::Tags;
 use crate::utils;
@@ -89,6 +90,32 @@ const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
 
+/// The root document Sphinx defaulted to before 2.0, which its
+/// `check_master_doc` falls back to ([`SphinxBuilder::check_master_doc`]).
+const PRE_2_0_ROOT_DOC: &str = "contents";
+
+/// `sphinx.project.EXCLUDE_PATHS` (`SP/sphinx/project.py:20`): the patterns
+/// discovery excludes after the configured ones
+/// ([`SphinxBuilder::discovery_excludes`]), and the ones the root document
+/// check names as built in ([`SphinxBuilder::check_root_document`]).
+const SPHINX_EXCLUDE_PATHS: [&str; 4] = ["**/_sources", ".#*", "**/.#*", "*.lproj/**"];
+
+/// The patterns the native `build` subcommand's discovery excludes on top
+/// of Sphinx's ([`SphinxBuilder::discovery_excludes`]): build output,
+/// caches, version-control and other hidden directories, and two operating
+/// system files. Sphinx walks all of them; sphinx-build mode does too
+/// ([`SphinxBuilder::discover_as_sphinx`]).
+const NATIVE_EXCLUDE_PATHS: [&str; 8] = [
+    "_build/**",
+    "__pycache__/**",
+    ".git/**",
+    ".svn/**",
+    ".hg/**",
+    ".*/**",
+    "Thumbs.db",
+    ".DS_Store",
+];
+
 /// The Sphinx builder a build's resolve pass stands for. In wave 5a it
 /// only picks the tags `.. only::` is evaluated against ([`Self::tags`],
 /// decision 12): every resolve pass gives the dummy builder's `''` URIs,
@@ -104,6 +131,16 @@ pub enum BuilderKind {
 }
 
 impl BuilderKind {
+    /// The builder's `name` (`Builder.name`): what
+    /// `smartquotes_excludes['builders']` names it by
+    /// (`SP/sphinx/transforms/__init__.py:392`).
+    pub fn name(self) -> &'static str {
+        match self {
+            BuilderKind::Html => "html",
+            BuilderKind::Dummy => "dummy",
+        }
+    }
+
     /// The tags the builder adds to the build's when it is made
     /// (`SP/sphinx/builders/__init__.py:120-124`): its `format`, its
     /// `name`, `format_<format>` and `builder_<name>`. The HTML builder's
@@ -114,6 +151,44 @@ impl BuilderKind {
         match self {
             BuilderKind::Html => &["html", "format_html", "builder_html"],
             BuilderKind::Dummy => &["", "dummy", "format_", "builder_dummy"],
+        }
+    }
+}
+
+/// Decision 14's read schedule: whether the parallel parses of a build
+/// stand, given the role registries each document started from and the
+/// ones it left ([`crate::rst::ParseOutput::roles_after`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadSchedule {
+    /// Every document started from the registries Sphinx's read would
+    /// have given it: each parse saw what Sphinx's read would have.
+    Parallel,
+    /// The document at `from`, in sorted docname order, is the first that
+    /// started from other registries: it and every document after it are
+    /// parsed again, in order, each from the registries the one before it
+    /// left (the first document of the build from the fresh ones).
+    Reparse { from: usize },
+}
+
+impl ReadSchedule {
+    /// The schedule for the documents a build parsed, in sorted docname
+    /// order, given the registries each one started from and the ones it
+    /// left. Sphinx reads them in that order in one process, so the first
+    /// starts from the registries no document has changed (`fresh`), and
+    /// every other from the ones the document before it left.
+    fn plan(
+        fresh: &crate::rst::roles::RoleTable,
+        starts: &[&crate::rst::roles::RoleTable],
+        roles_after: &[&crate::rst::roles::RoleTable],
+    ) -> ReadSchedule {
+        let expected = std::iter::once(fresh).chain(roles_after.iter().copied());
+        match starts
+            .iter()
+            .zip(expected)
+            .position(|(start, expected)| *start != expected)
+        {
+            Some(from) => ReadSchedule::Reparse { from },
+            None => ReadSchedule::Parallel,
         }
     }
 }
@@ -221,6 +296,18 @@ pub struct SphinxBuilder {
     /// The cross-project inventories `intersphinx_mapping` names, loaded
     /// once per build. Empty (and inert) unless a mapping is configured.
     intersphinx: Intersphinx,
+    /// How many documents the last read phase parsed a second time, in
+    /// sorted docname order, to follow decision 14's schedule: what the
+    /// unit tests read to pin that the parallel parses stand.
+    reparsed: std::sync::atomic::AtomicUsize,
+    /// Whether the build follows Sphinx's read on the root document
+    /// ([`Self::require_root_document`]): it falls back from `index` to
+    /// `contents` ([`Self::check_master_doc`]) and stops when its documents
+    /// do not include the root ([`Self::check_root_document`]).
+    require_root_document: bool,
+    /// Whether discovery excludes exactly what Sphinx's does
+    /// ([`Self::discover_as_sphinx`]), without [`NATIVE_EXCLUDE_PATHS`].
+    sphinx_discovery: bool,
 }
 
 /// [`BuildConfig`] fields deliberately kept *out* of the cache fingerprint.
@@ -239,8 +326,8 @@ pub struct SphinxBuilder {
 ///   in a config comparison.
 ///
 /// Including them here would be worse than a spurious full rebuild. A
-/// fingerprint mismatch wipes the whole cache directory (documents,
-/// `doctrees/`, `env.bin`, `__intersphinx_cache__`), and read-phase
+/// fingerprint mismatch empties the cache directory (documents,
+/// `doctrees/`, `env.bin`; all but `__intersphinx_cache__`), and read-phase
 /// diagnostics are only emitted for documents a build actually reads — so
 /// merely adding `-W` would force a cold read that re-emits every
 /// read-phase warning and fails, while the *next* identical `-W` run would
@@ -248,38 +335,6 @@ pub struct SphinxBuilder {
 /// included: tags select `only::` branches and therefore change the
 /// output.
 const EXCLUDED_FROM_FINGERPRINT: [&str; 2] = ["fail_on_warning", "nitpicky"];
-
-/// The extensions discovery treats as documents, in precedence order.
-///
-/// Sphinx drives this from `source_suffix` (default `{'.rst': ...}`); this
-/// crate still hard-codes the triple M1's discovery filter has always used,
-/// which `crate::rst`'s `SOURCE_SUFFIXES` mirrors for toctree entries. The
-/// *order* is load-bearing: it decides which file wins when two of them map
-/// to the same docname, the way `source_suffix`'s order decides Sphinx's
-/// `doc2path` fallback.
-const DISCOVERY_SUFFIXES: [&str; 3] = ["rst", "md", "txt"];
-
-/// Whether Sphinx's *default* `source_suffix` — `{'.rst':
-/// 'restructuredtext'}` (`config.py:243`) — covers `path`.
-///
-/// This crate's discovery is deliberately wider than that, and the two
-/// places where the difference would otherwise reach the user's warning
-/// stream both gate on this predicate: the orphan check in
-/// [`SphinxBuilder::resolve_phase`] and the docname-collision report in
-/// [`SphinxBuilder::dedup_by_docname`]. Neither may fail a `-W` build over
-/// a file Sphinx would not have read in the first place.
-fn is_default_source_suffix(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "rst")
-}
-
-/// `path`'s position in [`DISCOVERY_SUFFIXES`], or `None` if it is not a
-/// document at all.
-fn suffix_rank(path: &Path) -> Option<usize> {
-    let extension = path.extension()?.to_string_lossy();
-    DISCOVERY_SUFFIXES
-        .iter()
-        .position(|suffix| *suffix == extension)
-}
 
 /// blake3 over the configuration minus [`EXCLUDED_FROM_FINGERPRINT`].
 ///
@@ -292,6 +347,15 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
     if let Some(map) = value.as_object_mut() {
         for key in EXCLUDED_FROM_FINGERPRINT {
             map.remove(key);
+        }
+        // A prolog or an epilog Sphinx's reader crashes on changes every
+        // read, though the typed fields read it as `None`
+        // ([`BuildConfig::decoration_crashes`]).
+        if !config.decoration_crashes.is_empty() {
+            map.insert(
+                "decoration_crashes".to_string(),
+                serde_json::to_value(&config.decoration_crashes)?,
+            );
         }
     }
     Ok(blake3::hash(serde_json::to_string(&value)?.as_bytes())
@@ -372,11 +436,13 @@ fn stable_collection(values: impl Iterator<Item = StableValue>) -> String {
     md5_hex(&format!("[{repr}]"))
 }
 
+/// A `conf.py` literal as `stable_hash` sees it, which hashes `str()` of a
+/// number ([`crate::pyformat::number_str`]).
 fn stable_hash_json(value: &serde_json::Value) -> StableValue {
     match value {
         serde_json::Value::Null => StableValue::None,
         serde_json::Value::Bool(value) => StableValue::Bool(*value),
-        serde_json::Value::Number(value) => StableValue::Raw(value.to_string()),
+        serde_json::Value::Number(value) => StableValue::Raw(crate::pyformat::number_str(value)),
         serde_json::Value::String(value) => StableValue::String(value.clone()),
         serde_json::Value::Array(values) => {
             StableValue::List(values.iter().map(stable_hash_json).collect())
@@ -584,6 +650,15 @@ impl SphinxBuilder {
         // Sphinx logs for a rejected mapping, and running it again changes
         // nothing.
         config.init_intersphinx_mapping()?;
+        // A `conf.py` prolog or epilog this crate could not evaluate, which
+        // no override replaced, for a caller that has not checked: the CLI
+        // has, once its `-D` overrides were in. The same for a
+        // `source_suffix` Sphinx stops at as its configuration is set up.
+        config.check_evaluated()?;
+        config.check_source_suffix()?;
+        if let Some(crash) = config.source_suffix_config_crash() {
+            return Err(crash.into());
+        }
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
         let cache_dir = config
             .doctree_dir
@@ -660,7 +735,20 @@ impl SphinxBuilder {
             genindex: Mutex::new(Vec::new()),
             py_modindex: Mutex::new(env_py_domain::PyModindex::default()),
             intersphinx: Intersphinx::default(),
+            reparsed: std::sync::atomic::AtomicUsize::new(0),
+            require_root_document: false,
+            sphinx_discovery: false,
         })
+    }
+
+    /// How many documents the last build's read phase parsed a second
+    /// time, in sorted docname order, because one read before them left
+    /// role registries other than the ones they started from (decision
+    /// 14): 0 while the parallel parses stand. The crate's own tests read
+    /// it; it is no API.
+    #[cfg(test)]
+    pub(crate) fn reparsed_documents(&self) -> usize {
+        self.reparsed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Read every inventory `intersphinx_mapping` names — Sphinx's
@@ -669,8 +757,9 @@ impl SphinxBuilder {
     ///
     /// Local inventory locations are resolved against the source directory
     /// and re-read on every build; remote ones go through [`UreqFetcher`]
-    /// and are cached under the (fingerprint-wiped) cache directory, so a
-    /// configuration change discards them along with everything else.
+    /// and are cached in the cache directory's `__intersphinx_cache__`,
+    /// which survives a configuration change and a fresh environment, as
+    /// Sphinx's does in its doctree directory ([`BuildCache::clear`]).
     /// Fails where Sphinx raises `ConfigError` from `load_mappings` — an
     /// entry that survived normalisation but violates
     /// `_IntersphinxProject`'s invariants — with a
@@ -742,9 +831,31 @@ impl SphinxBuilder {
         self.incremental = true;
     }
 
-    /// Resolve as `kind` builds ([`BuilderKind`]); `html` unless set.
+    /// Follow Sphinx's read on the root document, sphinx-build mode's rule:
+    /// fall back from `index` to `contents` as Sphinx's `check_master_doc`
+    /// does ([`Self::check_master_doc`]), and stop the build when the
+    /// documents it read do not include the root
+    /// ([`Self::check_root_document`]). Without it, the native subcommand's,
+    /// a project with no root document builds the documents it has.
+    pub fn require_root_document(&mut self) {
+        self.require_root_document = true;
+    }
+
+    /// Discover the documents Sphinx does, sphinx-build mode's rule: leave
+    /// out what Sphinx's `find_files` leaves out and nothing else
+    /// ([`Self::discovery_excludes`]), so a `_build/`, a hidden directory or
+    /// `__pycache__` holds documents. Without it, as in the native
+    /// subcommand, discovery leaves those out too ([`NATIVE_EXCLUDE_PATHS`]).
+    pub fn discover_as_sphinx(&mut self) {
+        self.sphinx_discovery = true;
+    }
+
+    /// Read and resolve as `kind` builds ([`BuilderKind`]); `html` unless
+    /// set. The read takes the builder from here too: it decides whether
+    /// `smartquotes_excludes` turns smart quotes off.
     pub fn set_builder_kind(&mut self, kind: BuilderKind) {
         self.builder_kind = kind;
+        self.parser.set_builder_kind(&self.config, kind);
     }
 
     /// Discard the saved environment before building (sphinx-build `-E`).
@@ -754,7 +865,9 @@ impl SphinxBuilder {
     /// document as new. Emptying the cache directory is the same statement
     /// about the *other* half of the persisted state (documents and
     /// doctrees), and dropping the already-loaded environment here is what
-    /// keeps the two halves saying the same thing.
+    /// keeps the two halves saying the same thing. The inventories
+    /// intersphinx fetched stay, as they stay in Sphinx's doctree
+    /// directory ([`BuildCache::clear`]).
     pub fn fresh_env(&mut self) -> Result<()> {
         self.cache.clear()?;
         self.env = BuildEnvironment::default();
@@ -781,6 +894,13 @@ impl SphinxBuilder {
                 .into_iter()
                 .filter(|record| !self.filter.is_suppressed(&record.category)),
         );
+    }
+
+    /// The records the build has put in the stream so far, in the order
+    /// Sphinx emits them: after a build that crashed Sphinx (decision 13),
+    /// the ones Sphinx prints before the crash's report.
+    pub fn recorded_warnings(&self) -> Vec<Diagnostic> {
+        self.records.lock().unwrap().clone()
     }
 
     /// Add an error to the collection
@@ -831,17 +951,25 @@ impl SphinxBuilder {
     /// the sinks in the order Sphinx emits their records (`Builder.build`,
     /// `builders/__init__.py:389-466`; `read`, `:469-590`; `write`,
     /// `:705-778`): intersphinx's inventory loading at builder init,
-    /// discovery, the read sinks in sorted docname order, numbering
-    /// (`env-get-updated`, which `check_dependents` runs before
-    /// `check_consistency`), consistency, the resolve sinks in sorted
-    /// docname order, then the finishing steps (the general index). The
-    /// native subcommand's validation pass comes last.
+    /// discovery, the `contents` fallback (`env-get-outdated`,
+    /// [`Self::check_master_doc`]), the read sinks in sorted docname
+    /// order, numbering (`env-get-updated`, which `check_dependents` runs
+    /// before `check_consistency`), consistency, the resolve sinks in
+    /// sorted docname order, then the finishing steps (the general index).
+    /// The native subcommand's validation pass comes last.
     pub async fn build(&mut self) -> Result<BuildStats> {
         let start_time = Instant::now();
         info!("Starting build process...");
 
         // Ensure output directory exists
         tokio::fs::create_dir_all(&self.output_dir).await?;
+
+        // A `source_suffix` item that is no string crashes Sphinx's first
+        // discovery, which it runs while it sets its application up, before
+        // `builder-inited` loads the inventories (decision 13).
+        if let Some(crash) = self.config.source_suffix_discovery_crash() {
+            return Err(crash.into());
+        }
 
         self.load_intersphinx_inventories()?;
 
@@ -850,14 +978,30 @@ impl SphinxBuilder {
         let source_files = self.discover_source_files(&mut discovery).await?;
         self.flush(discovery);
         info!("Discovered {} source files", source_files.len());
+        self.check_master_doc(&source_files)?;
+        self.check_source_filetypes(&source_files)?;
 
         let mut env = std::mem::take(&mut self.env);
         let to_read = self.plan_read(&env, &source_files);
-        let mut read_results = self.read_phase(&source_files, &to_read)?;
+        let mut read_results = match self.read_phase(&source_files, &to_read) {
+            Ok(read_results) => read_results,
+            Err(error) => {
+                self.env = env;
+                return Err(error);
+            }
+        };
 
-        self.merge_phase(&mut env, &mut read_results);
-        self.resolve_phase(&mut env, &read_results);
+        // An input that crashes Sphinx (decision 13), in a document's read
+        // or as it is resolved, ends the build with that crash
+        // ([`SphinxCrash`]), once the records Sphinx prints before it are
+        // in the stream ([`Self::recorded_warnings`]). The environment
+        // keeps what the documents merged before it left, and is not saved.
+        let crashed = self
+            .merge_phase(&mut env, &mut read_results)
+            .and_then(|()| self.check_root_document(&source_files))
+            .and_then(|()| self.resolve_phase(&mut env, &read_results));
         self.env = env;
+        crashed?;
 
         let files_skipped = read_results
             .iter()
@@ -920,29 +1064,193 @@ impl SphinxBuilder {
         Ok(stats)
     }
 
+    /// Fails with a configuration error, before any document is read, when
+    /// a document discovery found has a file type other than
+    /// `restructuredtext` (the type of the first `source_suffix` its path
+    /// ends with, as `get_filetype` resolves it): this crate reads no other
+    /// type, and Sphinx reads one through the parser an extension registers
+    /// for it. It names the first such document in sorted docname order.
+    ///
+    /// Where no extension registers one, Sphinx reads the documents before
+    /// it and stops at it (`Source parser for markdown not registered`,
+    /// after their records); the build stops before reading anything
+    /// instead, as with an extension Sphinx reads the document and this
+    /// crate cannot. A file type no document has is never an error, in
+    /// this crate as in Sphinx.
+    fn check_source_filetypes(&self, files: &[PathBuf]) -> Result<()> {
+        let unreadable = files
+            .iter()
+            .filter_map(|path| {
+                let (suffix, filetype) = self
+                    .config
+                    .source_suffix
+                    .filetype(&path.to_string_lossy())?;
+                (!crate::config::SourceSuffix::is_restructuredtext(filetype))
+                    .then(|| (self.docname_of_path(path), path, suffix, filetype))
+            })
+            .min_by(|a, b| a.0.cmp(&b.0));
+        let Some((docname, path, suffix, filetype)) = unreadable else {
+            return Ok(());
+        };
+        Err(crate::error::ConfigError(format!(
+            "source_suffix maps {} to the file type {filetype}, and the document {} ({}) has \
+             that suffix: sphinx-ultra reads only reStructuredText documents; set -D \
+             source_suffix=<suffix> to build the documents of one suffix without editing conf.py",
+            py_repr_str(suffix),
+            py_repr_str(&docname),
+            path.display()
+        ))
+        .into())
+    }
+
+    /// Sphinx's `check_master_doc` (`SP/sphinx/config.py:861-883`), the
+    /// `env-get-outdated` handler its read runs once discovery is done and
+    /// before any document is read, when [`Self::require_root_document`]
+    /// asks for Sphinx's rules on the root document: when the root document
+    /// is `index`, `index` is none of the documents discovery found and
+    /// `contents` is one, it warns that Sphinx now uses `index` and makes
+    /// `contents` the root for the rest of the build, as Sphinx sets
+    /// `app.config.master_doc`: the root-document check, the orphan check
+    /// and every walk from the root take it.
+    ///
+    /// Sphinx pickles the configuration it changed with its environment, so
+    /// its next build finds `master_doc` changed (`[config changed
+    /// ('master_doc')]`) and reads every document again. The cache
+    /// directory is claimed for the changed configuration
+    /// ([`BuildCache::restamp`]) to the same effect.
+    fn check_master_doc(&mut self, files: &[PathBuf]) -> Result<()> {
+        if !self.require_root_document
+            || self.config.root_doc.as_deref().unwrap_or(DEFAULT_ROOT_DOC) != "index"
+        {
+            return Ok(());
+        }
+        let docnames: BTreeSet<String> = files
+            .iter()
+            .map(|path| self.docname_of_path(path))
+            .collect();
+        if docnames.contains("index") || !docnames.contains(PRE_2_0_ROOT_DOC) {
+            return Ok(());
+        }
+        // Logged with no `location` and no type, so it prints bare.
+        self.add_warning(BuildWarning::new(
+            PathBuf::new(),
+            None,
+            "Sphinx now uses \"index\" as the master document by default. To keep pre-2.0 \
+             behaviour, set \"master_doc = 'contents'\"."
+                .to_string(),
+            WarningType::Other,
+        ));
+        self.config.root_doc = Some(PRE_2_0_ROOT_DOC.to_string());
+        let fingerprint = config_fingerprint(&self.config)?;
+        self.cache.restamp(&fingerprint)
+    }
+
+    /// Sphinx's check that its read found the root document
+    /// (`SP/sphinx/builders/__init__.py:527-568`), once every document is
+    /// read and before `env-updated`, when [`Self::require_root_document`]
+    /// asks for it: the `SphinxError` that stops the build when `root_doc`,
+    /// after [`Self::check_master_doc`]'s fallback, is none of the
+    /// documents, after the read's records. Sphinx raises it on purpose, so
+    /// its report says no crash ([`SphinxCrash::deliberate`]); the
+    /// environment is not saved, as after a crash. Sphinx tests the
+    /// documents its environment holds once the read is done, which are the
+    /// ones discovery found; this crate tests those, so a root document it
+    /// fails to read (a per-file failure, decision 4) still counts.
+    ///
+    /// The root's path is `doc2path(root_doc)`, which for a document the
+    /// project has no file for is `<srcdir>/<root_doc><source_suffix[0]>`,
+    /// and the message's variant is the first that holds, each pattern
+    /// matched against that path, absolute, with `/` separators: a built-in
+    /// exclude pattern of `sphinx.project.EXCLUDE_PATHS`, a conf.py
+    /// exclude pattern, custom include patterns none of which matches (an
+    /// empty list included), otherwise the generic one. Of discovery's
+    /// exclude patterns, only those two lists are named: a root that
+    /// discovery leaves out because it lies under `templates_path` or an
+    /// HTML asset path gets the generic message, as in Sphinx. A pattern
+    /// only a relative path matches (`index.rst`) leads to the generic
+    /// message, as in Sphinx.
+    fn check_root_document(&self, files: &[PathBuf]) -> Result<(), SphinxCrash> {
+        if !self.require_root_document {
+            return Ok(());
+        }
+        let root = self.config.root_doc.as_deref().unwrap_or(DEFAULT_ROOT_DOC);
+        if files.iter().any(|path| self.docname_of_path(path) == root) {
+            return Ok(());
+        }
+        let path = self.undiscovered_path(root);
+        let canonical = path.to_string_lossy().replace('\\', "/");
+        let matches = |pattern: &str| matching::pattern_match(&canonical, pattern).unwrap_or(false);
+        let built_in = SPHINX_EXCLUDE_PATHS
+            .into_iter()
+            .find(|pattern| matches(pattern));
+        let excluded = self
+            .config
+            .exclude_patterns
+            .iter()
+            .find(|pattern| matches(pattern));
+        let include = &self.config.include_patterns;
+        // `set(include_patterns) != {'**'}`, and none of them matches.
+        let not_included = (include.is_empty() || include.iter().any(|pattern| pattern != "**"))
+            && !include.iter().any(|pattern| matches(pattern));
+        let reason = match (built_in, excluded) {
+            (Some(pattern), _) => format!(
+                " because it matches a built-in exclude pattern {}. Please move your master \
+                 document to a different location.",
+                py_repr_str(pattern)
+            ),
+            (None, Some(pattern)) => format!(
+                " because it matches an exclude pattern specified in conf.py, {}. Please \
+                 remove this pattern from conf.py.",
+                py_repr_str(pattern)
+            ),
+            (None, None) if not_included => format!(
+                " because it is not included in the custom include_patterns = [{}]. Ensure \
+                 that a pattern in include_patterns matches the master document.",
+                include
+                    .iter()
+                    .map(|pattern| py_repr_str(pattern))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            (None, None) => ". The master document must be within the source directory or a \
+                             subdirectory of it."
+                .to_string(),
+        };
+        Err(SphinxCrash::deliberate_sphinx_error(&format!(
+            "Sphinx is unable to load the master document ({}){reason}",
+            path.display()
+        )))
+    }
+
+    /// The exclude patterns of discovery, in the order Sphinx's
+    /// `env.find_files` passes them (`SP/sphinx/environment/__init__.py:
+    /// 485-495`): `exclude_patterns`, `templates_path`, then the HTML
+    /// builder's asset paths, `html_extra_path` and `html_static_path`
+    /// (`get_asset_paths`, `SP/sphinx/builders/html/__init__.py:406-407`),
+    /// each entry as written, a pattern matched against the srcdir-relative
+    /// path; then `Project.discover`'s [`SPHINX_EXCLUDE_PATHS`]. That is
+    /// all of Sphinx's, and all of sphinx-build mode's
+    /// ([`Self::discover_as_sphinx`]); the native subcommand adds
+    /// [`NATIVE_EXCLUDE_PATHS`].
+    fn discovery_excludes(&self) -> Vec<String> {
+        let as_pattern = |path: &PathBuf| path.to_string_lossy().into_owned();
+        let mut patterns = self.config.exclude_patterns.clone();
+        patterns.extend(self.config.templates_path.iter().map(as_pattern));
+        patterns.extend(self.config.html_extra_path.iter().map(as_pattern));
+        patterns.extend(self.config.html_static_path.iter().map(as_pattern));
+        patterns.extend(SPHINX_EXCLUDE_PATHS.map(str::to_string));
+        if !self.sphinx_discovery {
+            patterns.extend(NATIVE_EXCLUDE_PATHS.map(str::to_string));
+        }
+        patterns
+    }
+
     async fn discover_source_files(&self, sink: &mut DiagnosticSink) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
         let include_patterns = &self.config.include_patterns;
-        let exclude_patterns = &self.config.exclude_patterns;
+        let exclude_patterns = self.discovery_excludes();
 
-        // Add built-in exclude patterns for common build artifacts and hidden files
-        let mut all_exclude_patterns = exclude_patterns.clone();
-        all_exclude_patterns.extend_from_slice(&[
-            "_build/**".to_string(),
-            "__pycache__/**".to_string(),
-            ".git/**".to_string(),
-            ".svn/**".to_string(),
-            ".hg/**".to_string(),
-            ".*/**".to_string(), // Skip all hidden directories
-            "Thumbs.db".to_string(),
-            ".DS_Store".to_string(),
-        ]);
-
-        match matching::get_matching_files(
-            &self.source_dir,
-            include_patterns,
-            &all_exclude_patterns,
-        ) {
+        match matching::get_matching_files(&self.source_dir, include_patterns, &exclude_patterns) {
             // Sphinx's Project.discover keeps only files with a configured
             // source suffix, regardless of include_patterns
             Ok(files) => Ok(self.dedup_by_docname(
@@ -966,12 +1274,15 @@ impl SphinxBuilder {
     }
 
     /// Sphinx's `Project.discover` collision handling
-    /// (`project.py:64-79`): two files that map to one docname are not two
-    /// documents. Sphinx keeps whichever its directory walk yields first,
-    /// warns `multiple files found for the document "%s"` once, and names
-    /// the file it kept; this crate keeps the one whose suffix comes first
-    /// in [`DISCOVERY_SUFFIXES`], because a walk order is not something a
-    /// build should be allowed to depend on.
+    /// (`SP/sphinx/project.py:64-79`): two files that map to one docname
+    /// are not two documents. Sphinx keeps the first its directory walk
+    /// yields, which takes a directory's files in sorted order
+    /// (`get_matching_files`, `SP/sphinx/util/matching.py:115-160`), so of
+    /// `page.rst` and `page.txt` it keeps `page.rst`, whatever order
+    /// `source_suffix` names their suffixes in; and it warns `multiple files
+    /// found for the document "%s"` once and names the file it kept. Two
+    /// files can only collide when `source_suffix` names more than one
+    /// suffix: the docname is the file's path less its suffix.
     ///
     /// Everything downstream of discovery is keyed by docname alone — the
     /// persisted doctree, `env.all_docs`, `plan_read`'s source map, the
@@ -979,26 +1290,13 @@ impl SphinxBuilder {
     /// alternated between them across builds, the loser's edits never
     /// invalidated anything, and two threads wrote one output path at once.
     ///
-    /// The *warning* is scoped the same way the orphan check is
-    /// ([`is_default_source_suffix`]): Sphinx's default `source_suffix` is
-    /// `.rst` alone, so a collision involving at most one `.rst` file is
-    /// not a collision Sphinx can see — it never discovered the `.md`/`.txt`
-    /// sibling at all, and builds `page.rst` beside `page.md` cleanly. Only
-    /// a collision between two files Sphinx would *both* have read is
-    /// reported; anything else drops its loser silently, so a wider
-    /// discovery set can never fail a `-W` build that Sphinx passes. No two
-    /// same-stem `.rst` files can exist in one directory, so today the
-    /// warning is unreachable by construction; it becomes reachable when
-    /// `source_suffix` turns configurable and a project names a second
-    /// restructuredtext suffix (wave 6, with MyST).
-    ///
     /// Two deliberate deviations from Sphinx's message, both because
     /// Sphinx's own rendering is an artifact rather than a contract: the
-    /// listed files are the colliding *documents* in the order this
-    /// function ranked them (Sphinx globs `docname.*`, so its list picks up
-    /// non-source neighbours and comes out in filesystem order), and the
-    /// kept path is rendered as a plain Python string repr (Sphinx's `%r`
-    /// hits `_StrPath.__repr__` and prints `_StrPath('/path')`).
+    /// listed files are the colliding *documents* in sorted order (Sphinx
+    /// globs `docname.*`, so its list picks up non-source neighbours and
+    /// comes out in filesystem order), and the kept path is rendered as a
+    /// plain Python string repr (Sphinx's `%r` hits `_StrPath.__repr__` and
+    /// prints `_StrPath('/path')`).
     fn dedup_by_docname(&self, files: Vec<PathBuf>, sink: &mut DiagnosticSink) -> Vec<PathBuf> {
         let mut by_docname: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
         for path in &files {
@@ -1013,39 +1311,27 @@ impl SphinxBuilder {
             if candidates.len() < 2 {
                 continue;
             }
-            candidates.sort_by(|a, b| {
-                suffix_rank(a)
-                    .cmp(&suffix_rank(b))
-                    .then_with(|| a.as_path().cmp(b.as_path()))
-            });
-            // Only a collision Sphinx could see is worth a diagnostic.
-            if candidates
+            candidates.sort();
+            let listed: Vec<String> = candidates
                 .iter()
-                .filter(|path| is_default_source_suffix(path))
-                .count()
-                > 1
-            {
-                let listed: Vec<String> = candidates
-                    .iter()
-                    .map(|path| {
-                        path.strip_prefix(&self.source_dir)
-                            .unwrap_or(path)
-                            .display()
-                            .to_string()
-                    })
-                    .collect();
-                sink.push_next(BuildWarning::new(
-                    // Logged with no `location`, so it prints bare.
-                    PathBuf::new(),
-                    None,
-                    format!(
-                        "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
-                        listed.join(", "),
-                        py_repr_str(&candidates[0].display().to_string()),
-                    ),
-                    WarningType::Other,
-                ));
-            }
+                .map(|path| {
+                    path.strip_prefix(&self.source_dir)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string()
+                })
+                .collect();
+            sink.push_next(BuildWarning::new(
+                // Logged with no `location`, so it prints bare.
+                PathBuf::new(),
+                None,
+                format!(
+                    "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
+                    listed.join(", "),
+                    py_repr_str(&candidates[0].display().to_string()),
+                ),
+                WarningType::Other,
+            ));
             dropped.extend(candidates.into_iter().skip(1));
         }
 
@@ -1084,10 +1370,19 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Whether discovery treats `path` as a document
-    /// ([`DISCOVERY_SUFFIXES`]).
+    /// Whether discovery treats `path` as a document: whether its name ends
+    /// with a `source_suffix` ([`Self::source_docname`]).
     fn is_source_file(&self, path: &Path) -> bool {
-        suffix_rank(path).is_some()
+        self.source_docname(path).is_some()
+    }
+
+    /// `Project.path2doc` (`SP/sphinx/project.py:94-112`): the docname of
+    /// the file at `path`, under the source directory, when its name ends
+    /// with a `source_suffix` ([`crate::config::SourceSuffix::docname`]).
+    fn source_docname(&self, path: &Path) -> Option<String> {
+        let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        self.config.source_suffix.docname(&relative)
     }
 
     /// Which documents this build has to read
@@ -1117,9 +1412,10 @@ impl SphinxBuilder {
 
         let outdated = env.get_outdated_files(
             &found,
-            // A content-bearing configuration change wipes the cache
-            // directory whole (`.config-fingerprint`), so it reaches this
-            // point as an empty environment as well; saying it out loud
+            // A content-bearing configuration change empties the cache
+            // directory (`.config-fingerprint`; only intersphinx's
+            // inventories stay), so it reaches this point as an empty
+            // environment as well; saying it out loud
             // keeps the two statements from drifting apart. Operational
             // flags (`-W`, `-n`) are excluded from the fingerprint
             // (`EXCLUDED_FROM_FINGERPRINT`) and therefore never land here.
@@ -1169,11 +1465,28 @@ impl SphinxBuilder {
         to_read
     }
 
-    /// Read phase: parse every outdated source file in parallel, and
-    /// recover the rest from the cache.
+    /// Read phase: recover every up-to-date document from the cache and
+    /// parse every outdated one, in parallel, then follow decision 14's
+    /// schedule ([`ReadSchedule`]): the role registries are build-scoped,
+    /// as docutils' `_roles` is for Sphinx, whose read is in sorted
+    /// docname order. The first document to read starts from the fresh
+    /// registries ([`Parser::fresh_roles`]), every other from the build's
+    /// baseline ([`Parser::baseline_roles`]), which adds `rst_prolog`'s
+    /// own definitions, the ones every document made before its own text;
+    /// once a document leaves others (a `.. role::`, a `.. default-role::`
+    /// without `default_role` set, a definition in `rst_epilog`), every
+    /// document parsed after it in sorted docname order is parsed again,
+    /// in that order, each from the registries the one before it left.
+    /// Like Sphinx's, only the documents read in this build contribute:
+    /// one recovered from the cache adds nothing. An incremental build then
+    /// stores each parsed document in the cache once, as its last parse
+    /// left it.
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
+    /// A read that crashes Sphinx keeps its crash
+    /// ([`crate::transforms::state::DocumentState::crash`]), which
+    /// [`Self::merge_phase`] fails the build with, in Sphinx's read order.
     /// Results keep the discovery order of `files`.
     fn read_phase(&self, files: &[PathBuf], to_read: &BTreeSet<String>) -> Result<Vec<ReadResult>> {
         info!(
@@ -1196,19 +1509,95 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
-        let results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
+        let fresh = Arc::clone(self.parser.fresh_roles());
+        let baseline = Arc::clone(self.parser.baseline_roles());
+        // Sphinx reads the first document of its read before any other has
+        // registered a role, so only that one starts from the fresh
+        // registries: its leading field-marker lines, which come before
+        // `rst_prolog`, see none of the prolog's definitions. The schedule
+        // below parses it again if another document turns out to be first.
+        let first_read = to_read.first().cloned();
+        let start_of = |docname: &str| {
+            if first_read.as_deref() == Some(docname) {
+                &fresh
+            } else {
+                &baseline
+            }
+        };
+        let mut results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
             files
                 .par_iter()
                 .map(|file_path| {
                     let docname = self.docname_of_path(file_path);
                     let outdated = to_read.contains(&docname);
+                    let start = start_of(&docname);
                     (
                         file_path.clone(),
-                        self.read_one_file(file_path, docname, &found_docs, outdated),
+                        self.read_one_file(file_path, docname, &found_docs, outdated, start),
                     )
                 })
                 .collect()
         });
+
+        // The documents this build parsed, in sorted docname order.
+        let mut parsed: Vec<(String, usize)> = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, result))| match result {
+                Ok(read) if read.read_time_us.is_some() => Some((read.docname.clone(), index)),
+                _ => None,
+            })
+            .collect();
+        parsed.sort();
+        let starts: Vec<&crate::rst::roles::RoleTable> = parsed
+            .iter()
+            .map(|(docname, _)| start_of(docname).as_ref())
+            .collect();
+        let roles_after: Vec<&crate::rst::roles::RoleTable> = parsed
+            .iter()
+            .map(|(_, index)| match &results[*index].1 {
+                Ok(read) => &read.outcome.output.roles_after,
+                Err(_) => unreachable!("only successful reads are listed"),
+            })
+            .collect();
+        let mut reparsed = 0;
+        if let ReadSchedule::Reparse { from } = ReadSchedule::plan(&fresh, &starts, &roles_after) {
+            let mut roles = match from.checked_sub(1) {
+                Some(before) => Arc::new(roles_after[before].clone()),
+                None => Arc::clone(&fresh),
+            };
+            for (docname, index) in &parsed[from..] {
+                let file_path = results[*index].0.clone();
+                let result = self.parse_one_file(&file_path, docname.clone(), &found_docs, &roles);
+                if let Ok(read) = &result {
+                    roles = Arc::new(read.outcome.output.roles_after.clone());
+                }
+                results[*index].1 = result;
+                reparsed += 1;
+            }
+        }
+        self.reparsed
+            .store(reparsed, std::sync::atomic::Ordering::Relaxed);
+
+        // The cache stores each parsed document once, as the schedule left
+        // it, in parallel: a parse the schedule redid never reaches it. A
+        // document that cannot be stored fails as one that cannot be
+        // parsed does.
+        if self.incremental {
+            pool.install(|| {
+                results.par_iter_mut().for_each(|(file_path, result)| {
+                    let stored = match result {
+                        Ok(read) if read.read_time_us.is_some() => {
+                            self.cache.store_document(file_path, &read.document)
+                        }
+                        _ => return,
+                    };
+                    if let Err(error) = stored {
+                        *result = Err(error);
+                    }
+                });
+            });
+        }
 
         let mut read_results = Vec::with_capacity(results.len());
         for (file_path, result) in results {
@@ -1243,6 +1632,7 @@ impl SphinxBuilder {
         docname: String,
         found_docs: &Arc<BTreeSet<String>>,
         outdated: bool,
+        roles: &Arc<crate::rst::roles::RoleTable>,
     ) -> Result<ReadResult> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
@@ -1275,11 +1665,28 @@ impl SphinxBuilder {
             }
         }
 
-        // Read and parse the file
+        self.parse_one_file(file_path, docname, found_docs, roles)
+    }
+
+    /// One document's parse, from the role registries `roles`: its read
+    /// and the document it gives. [`Self::read_phase`] stores the document
+    /// in the cache once the read schedule has settled, when the build is
+    /// incremental.
+    fn parse_one_file(
+        &self,
+        file_path: &Path,
+        docname: String,
+        found_docs: &Arc<BTreeSet<String>>,
+        roles: &Arc<crate::rst::roles::RoleTable>,
+    ) -> Result<ReadResult> {
         let content = std::fs::read_to_string(file_path)?;
-        let parsed =
-            self.parser
-                .parse_full(file_path, &content, &docname, Some(Arc::clone(found_docs)))?;
+        let parsed = self.parser.parse_full_from(
+            file_path,
+            &content,
+            &docname,
+            Some(Arc::clone(found_docs)),
+            Arc::clone(roles),
+        )?;
         let mut document = parsed.document;
 
         // Simple document rendering (placeholder). Done here, in the read
@@ -1296,11 +1703,6 @@ impl SphinxBuilder {
         // do not validate, `FilterSystemMessages` the reporter's messages),
         // and what a later build loads has to be the tree this build
         // resolved. See [`Self::merge_phase`].
-
-        // Cache the document
-        if self.incremental {
-            self.cache.store_document(file_path, &document)?;
-        }
 
         Ok(ReadResult {
             docname,
@@ -1338,7 +1740,19 @@ impl SphinxBuilder {
     /// a time in sorted docname order, whatever order the parallel reads
     /// finished in. A document recovered from the cache prints none
     /// (decision 6).
-    fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
+    ///
+    /// A document whose read crashed Sphinx (decision 13) ends the phase
+    /// with its crash, located: the first such document in this sorted
+    /// order is the one Sphinx's read crashes on, whatever stage of its
+    /// read raised, and whatever `-j` read it. Its records before the
+    /// crash print, as the earlier documents' did; it is not merged and
+    /// its doctree is not persisted, and the documents after it are not
+    /// merged.
+    fn merge_phase(
+        &self,
+        env: &mut BuildEnvironment,
+        results: &mut [ReadResult],
+    ) -> Result<(), SphinxCrash> {
         env.root_doc = self
             .config
             .root_doc
@@ -1364,10 +1778,10 @@ impl SphinxBuilder {
         let mut ordered: Vec<usize> = (0..results.len()).collect();
         ordered.sort_by(|a, b| results[*a].docname.cmp(&results[*b].docname));
 
-        // Sphinx's `env.doc2path`: the source file a docname was read from.
-        // Documents this build did not read fall back to the conventional
-        // `<srcdir>/<docname>.rst`, the same shape `doc2path` synthesizes
-        // from `source_suffix`.
+        // Sphinx's `env.doc2path`: the source file a docname was discovered
+        // in, and for a docname the project has no file for,
+        // `<srcdir>/<docname><source_suffix[0]>`, the path `doc2path`
+        // synthesizes (`SP/sphinx/project.py:114-128`).
         //
         // Owned rather than borrowed from `results`, which this loop holds
         // mutably: stage M changes each document's read.
@@ -1379,9 +1793,9 @@ impl SphinxBuilder {
             paths
                 .get(docname)
                 .cloned()
-                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+                .unwrap_or_else(|| self.undiscovered_path(docname))
         };
-        let settings = ReadSettings::from_config(&self.config);
+        let settings = ReadSettings::from_config(&self.config, self.builder_kind);
 
         for index in ordered {
             let result = &mut results[index];
@@ -1426,6 +1840,14 @@ impl SphinxBuilder {
                 sink.push_next(record);
             }
             self.flush(sink);
+            if let Some(crash) = &result.outcome.state().crash {
+                return Err(crash.clone().located(
+                    &result.outcome.doctree().sources,
+                    &self.source_dir,
+                    docname,
+                    self.config.source_suffix.first(),
+                ));
+            }
 
             // Persist the doctree *after* stage M has had it, the way Sphinx
             // writes its pickle after the read's transforms and
@@ -1449,6 +1871,7 @@ impl SphinxBuilder {
                 ));
             }
         }
+        Ok(())
     }
 
     /// Resolve phase: whole-project state that only exists once every
@@ -1471,7 +1894,15 @@ impl SphinxBuilder {
     /// cache directory is optional infrastructure, the output this build
     /// produced is valid without it, and the only consequence is that the
     /// next build starts cold. It is reported and the build goes on.
-    fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+    ///
+    /// A reference that crashes Sphinx as it is resolved (decision 13)
+    /// ends the phase with that crash ([`Self::xref_phase`]): the general
+    /// index is not assembled and the environment is not saved.
+    fn resolve_phase(
+        &self,
+        env: &mut BuildEnvironment,
+        results: &[ReadResult],
+    ) -> Result<(), SphinxCrash> {
         info!("Resolving build environment");
 
         let sources: HashMap<&str, &Path> = results
@@ -1485,18 +1916,8 @@ impl SphinxBuilder {
             .collect();
 
         self.number_phase(env, results);
-        // Sphinx's default `source_suffix` is `.rst` alone, so a `.md`/`.txt`
-        // this crate's wider discovery admitted is not a document Sphinx
-        // would warn about being orphaned. A docname with no source in this
-        // build (nothing was read for it) is treated as one, which is the
-        // pre-existing behavior.
-        let orphan_candidate = |docname: &str| {
-            sources
-                .get(docname)
-                .is_none_or(|path| is_default_source_suffix(path))
-        };
         let mut consistency = DiagnosticSink::default();
-        for message in env_toctree::check_consistency(env, &orphan_candidate) {
+        for message in env_toctree::check_consistency(env) {
             // Sphinx logs these with `location=docname`, which renders as
             // the document's source path with no line number.
             let source = sources
@@ -1522,14 +1943,14 @@ impl SphinxBuilder {
             sources
                 .get(docname)
                 .map(|path| path.to_path_buf())
-                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+                .unwrap_or_else(|| self.undiscovered_path(docname))
         };
         for warning in env_citation::check_consistency(env, &doc2path) {
             consistency.push_next(warning);
         }
         self.flush(consistency);
 
-        self.xref_phase(env, results, &doc2path);
+        self.xref_phase(env, results, &doc2path)?;
         self.genindex_phase(env, &sources);
         self.py_modindex_phase(env);
 
@@ -1540,6 +1961,7 @@ impl SphinxBuilder {
                 self.cache.cache_dir().display()
             );
         }
+        Ok(())
     }
 
     /// Assemble the general index (`IndexEntries.create_index`).
@@ -1605,7 +2027,7 @@ impl SphinxBuilder {
         env: &BuildEnvironment,
         results: &[ReadResult],
         doc2path: &dyn Fn(&str) -> PathBuf,
-    ) {
+    ) -> Result<(), SphinxCrash> {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
             .map(|result| (result.docname.as_str(), result.outcome.doctree()))
@@ -1625,6 +2047,7 @@ impl SphinxBuilder {
             env,
             numfig: self.config.numfig,
             numfig_format: &self.config.numfig_format,
+            math: crate::env::math::MathConfig::from(&self.config),
             doctree: &load_doctree,
             relative_uri: &relative_uri,
             intersphinx: &self.intersphinx,
@@ -1686,6 +2109,13 @@ impl SphinxBuilder {
             for record in post.records {
                 sink.push_next(record);
             }
+            // A reference that crashes Sphinx (decision 13) ends the
+            // phase, after the records Sphinx logged before it: those of
+            // the documents written before this one, and this one's.
+            if let Some(crash) = post.crash {
+                self.flush(sink);
+                return Err(crash);
+            }
             env_toctree::resolve_body_toctrees(
                 env,
                 &result.docname,
@@ -1735,6 +2165,7 @@ impl SphinxBuilder {
                  (domain not implemented until M5)"
             );
         }
+        Ok(())
     }
 
     /// Section and figure numbering (`TocTreeCollector.get_updated_docs`,
@@ -1919,13 +2350,18 @@ impl SphinxBuilder {
         }
     }
 
+    /// The page of the document read from `source_path`:
+    /// `<outdir>/<docname>.html`. Swapping the file's extension for `.html`
+    /// would misname it for a `source_suffix` with a second dot or a comma
+    /// in it (`page.rst.txt`, `index.rst,.txt`).
     fn get_output_path(&self, source_path: &Path) -> Result<PathBuf> {
-        let relative_path = source_path.strip_prefix(&self.source_dir)?;
-        let mut output_path = self.output_dir.join(relative_path);
-
-        // Change extension to .html
-        output_path.set_extension("html");
-
+        // A file outside the source directory has no page in the output
+        // directory: its docname would be its absolute path.
+        source_path.strip_prefix(&self.source_dir)?;
+        let docname = self.docname_of_path(source_path);
+        let mut output_path = self.output_dir.clone();
+        output_path.extend(docname.split('/'));
+        output_path.as_mut_os_string().push(".html");
         Ok(output_path)
     }
 
@@ -2033,14 +2469,25 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Root-relative docname (no extension, forward slashes) for a source
-    /// path.
+    /// `doc2path(docname)` for a docname the project has no file for:
+    /// `<srcdir>/<docname><source_suffix[0]>` (`Project.doc2path`,
+    /// `SP/sphinx/project.py:114-128`).
+    fn undiscovered_path(&self, docname: &str) -> PathBuf {
+        self.source_dir
+            .join(format!("{docname}{}", self.config.source_suffix.first()))
+    }
+
+    /// Root-relative docname (forward slashes) for a source path: the path
+    /// less its `source_suffix` ([`Self::source_docname`]), or, for a path
+    /// discovery would not have admitted, less its extension.
     fn docname_of_path(&self, path: &Path) -> String {
-        let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
-        relative
-            .with_extension("")
-            .to_string_lossy()
-            .replace('\\', "/")
+        self.source_docname(path).unwrap_or_else(|| {
+            let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
+            relative
+                .with_extension("")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
     }
 
     /// Run the directive/role validation system over every RST document.
@@ -2318,6 +2765,465 @@ mod tests {
         (stats, builder)
     }
 
+    /// A cold build of the project `files` (relative path, text) with
+    /// `jobs` parallel jobs, as the CLI's sphinx-build mode configures it:
+    /// each document's resolved doctree, by docname, and the warning
+    /// stream.
+    fn build_roles_project(
+        files: &[(&str, &str)],
+        jobs: usize,
+    ) -> (BTreeMap<String, String>, Vec<String>) {
+        let (resolved, warnings, _) = build_roles_project_with(BuildConfig::default(), files, jobs);
+        (resolved, warnings)
+    }
+
+    /// [`build_roles_project`] under `config`, M1's validation off, with
+    /// how many documents the read schedule parsed a second time
+    /// ([`SphinxBuilder::reparsed_documents`]).
+    fn build_roles_project_with(
+        config: BuildConfig,
+        files: &[(&str, &str)],
+        jobs: usize,
+    ) -> (BTreeMap<String, String>, Vec<String>, usize) {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src");
+        for (path, text) in files {
+            let path = source_dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let config = BuildConfig {
+            validate_directives: false,
+            ..config
+        };
+        let mut builder = SphinxBuilder::new(config, source_dir, tmp.path().join("out")).unwrap();
+        builder.set_parallel_jobs(jobs);
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+        let resolved = builder.resolved.lock().unwrap().clone();
+        let warnings = stats
+            .warning_details
+            .iter()
+            .map(|record| record.message.clone())
+            .collect();
+        (resolved, warnings, builder.reparsed_documents())
+    }
+
+    /// The lines of `resolved`'s document `docname` after its first
+    /// `<paragraph>` line.
+    fn paragraph<'r>(resolved: &'r BTreeMap<String, String>, docname: &str) -> Vec<&'r str> {
+        let pformat = &resolved[docname];
+        let start = pformat
+            .lines()
+            .position(|line| line.trim() == "<paragraph>")
+            .unwrap_or_else(|| panic!("{docname} has a paragraph:\n{pformat}"));
+        pformat.lines().skip(start + 1).collect()
+    }
+
+    /// Decision 14 ([RC §3.15]): docutils keeps the roles `.. role::`
+    /// registers for the whole process, and Sphinx reads a build's
+    /// documents in sorted docname order, so a custom role exists in every
+    /// document after the one that defines it and in none before; so does
+    /// a `.. default-role::` while `default_role` is unset ([RC §4.2]).
+    /// The parallel parse starts the first document from the fresh registry
+    /// and every other from the baseline, and reads each one after the
+    /// first to change it again, in order.
+    #[test]
+    fn custom_role_defined_in_earlier_doc_applies_to_later_doc() {
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n   d\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            (
+                "b.rst",
+                "B\n=\n\n.. role:: red\n\n.. default-role:: math\n\nHere :red:`y`.\n",
+            ),
+            ("c.rst", "C\n=\n\nLater :red:`z` and `a^2`.\n"),
+            ("d.rst", "D\n=\n\nLast `b^2`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings) = build_roles_project(&files, jobs);
+            assert_eq!(
+                warnings,
+                ["Unknown interpreted text role \"red\"."],
+                "-j {jobs}"
+            );
+            assert_eq!(
+                paragraph(&resolved, "c")[..6],
+                [
+                    "            Later ",
+                    "            <inline classes=\"red\">",
+                    "                z",
+                    "             and ",
+                    "            <math>",
+                    "                a^2",
+                ],
+                "-j {jobs}"
+            );
+            assert_eq!(
+                paragraph(&resolved, "d")[..3],
+                [
+                    "            Last ",
+                    "            <math>",
+                    "                b^2"
+                ],
+                "-j {jobs}"
+            );
+        }
+    }
+
+    /// Decision 14: a role defined in an included file is registered by
+    /// the document that includes it, in that document's place in the
+    /// read order.
+    #[test]
+    fn role_defined_in_included_file_applies_to_later_doc() {
+        let files = [
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            ("a.rst", "A\n=\n\n.. include:: roles.inc\n"),
+            ("roles.inc", ".. role:: red\n"),
+            ("b.rst", "B\n=\n\nLater :red:`z`.\n"),
+        ];
+        let (resolved, warnings) = build_roles_project(&files, 4);
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(
+            paragraph(&resolved, "b")[..3],
+            [
+                "            Later ",
+                "            <inline classes=\"red\">",
+                "                z"
+            ]
+        );
+    }
+
+    /// Decision 14: a role `rst_epilog` defines is registered after each
+    /// document's own text, so the first document read cannot use it and
+    /// every later one can (Sphinx 9.1.0 `-j 1`, scratch
+    /// `t17b/specs/epilog_role.json`: only `a.rst:4` errors).
+    #[test]
+    fn rst_epilog_role_applies_to_later_docs_only() {
+        let config = BuildConfig {
+            rst_epilog: Some(".. role:: red\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i`.\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            ("b.rst", "B\n=\n\nLater :red:`y`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(
+                warnings,
+                ["Unknown interpreted text role \"red\"."],
+                "-j {jobs}"
+            );
+            // `a` leaves the registries with `red`: `b` and `index` are
+            // read again from them.
+            assert_eq!(reparsed, 2, "-j {jobs}");
+            assert_eq!(
+                paragraph(&resolved, "b")[..3],
+                [
+                    "            Later ",
+                    "            <inline classes=\"red\">",
+                    "                y"
+                ],
+                "-j {jobs}"
+            );
+            let index = &resolved["index"];
+            assert!(
+                index.contains("<inline classes=\"red\">\n                i"),
+                "-j {jobs}: {index}"
+            );
+        }
+    }
+
+    /// Decision 14's baseline: every document makes `rst_prolog`'s role
+    /// and default-role definitions again before its own text, so each
+    /// one leaves the registries the build's baseline holds, every
+    /// document after the first starts from them, and the parallel parses
+    /// stand. (Godot's prolog defines four roles this way.)
+    #[test]
+    fn prolog_only_roles_keep_reads_parallel() {
+        use crate::rst::{parse_rst_full, ParseOptions, ReadConfig};
+        let config = BuildConfig {
+            rst_prolog: Some(
+                ".. role:: button\n   :class: role-button role-ui\n\n.. default-role:: math\n"
+                    .to_string(),
+            ),
+            ..BuildConfig::default()
+        };
+        let docs = [
+            ("a", "A\n=\n\nPress :button:`a` for `a^2`.\n"),
+            ("b", "B\n=\n\nPress :button:`b` for `b^2`.\n"),
+            ("c", "C\n=\n\nPress :button:`c` for `c^2`.\n"),
+        ];
+
+        let parser = Parser::new(&config).unwrap();
+        let (fresh, baseline) = (parser.fresh_roles(), parser.baseline_roles());
+        assert_ne!(fresh, baseline, "the prolog defines roles");
+        let starts = [fresh.as_ref(), baseline.as_ref(), baseline.as_ref()];
+        let after: Vec<_> = docs
+            .iter()
+            .zip(starts)
+            .map(|((docname, text), start)| {
+                let opts = ParseOptions {
+                    sphinx: true,
+                    docname: docname.to_string(),
+                    read: ReadConfig::from(&config),
+                    roles: Some(Arc::new(start.clone())),
+                    ..ParseOptions::default()
+                };
+                parse_rst_full(text, &opts).roles_after
+            })
+            .collect();
+        let after: Vec<_> = after.iter().collect();
+        assert_eq!(
+            ReadSchedule::plan(fresh, &starts, &after),
+            ReadSchedule::Parallel
+        );
+
+        let mut files = vec![(
+            "index.rst",
+            "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+        )];
+        let names = docs.map(|(docname, _)| format!("{docname}.rst"));
+        files.extend(
+            names
+                .iter()
+                .map(String::as_str)
+                .zip(docs.map(|(_, text)| text)),
+        );
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(reparsed, 0, "-j {jobs}: the parallel parses stand");
+            for (docname, _) in docs {
+                assert_eq!(
+                    paragraph(&resolved, docname)[..6].join("\n"),
+                    format!(
+                        "            Press \n\
+                         \x20           <inline classes=\"role-button role-ui\">\n\
+                         \x20               {docname}\n\
+                         \x20            for \n\
+                         \x20           <math>\n\
+                         \x20               {docname}^2"
+                    ),
+                    "-j {jobs}"
+                );
+            }
+        }
+    }
+
+    /// A prolog's `include` reads its file where a document at the root of
+    /// the source directory would (Sphinx's `Include` resolves the path
+    /// against the document's directory), so the baseline, computed once
+    /// the source directory is known, holds the role the included file
+    /// defines, and the parallel parses stand. (Sphinx 9.1.0, scratch
+    /// `t17b-fix1/specs/prolog_include_role.json`: no record.)
+    #[test]
+    fn a_role_a_prolog_includes_keeps_reads_parallel() {
+        let config = BuildConfig {
+            rst_prolog: Some(".. include:: roles.inc\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            ("roles.inc", ".. role:: red\n"),
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i`.\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            ("b.rst", "B\n=\n\nLater :red:`y`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(reparsed, 0, "-j {jobs}: the parallel parses stand");
+            for docname in ["a", "b", "index"] {
+                let paragraph = paragraph(&resolved, docname).join("\n");
+                assert!(
+                    paragraph.contains("<inline classes=\"red\">"),
+                    "-j {jobs}, {docname}: {paragraph}"
+                );
+            }
+        }
+    }
+
+    /// The first document Sphinx reads starts from the registries no
+    /// document has changed, so the leading field-marker lines of that
+    /// one alone, which come before `rst_prolog`, see none of its
+    /// definitions; every later document's do (Sphinx 9.1.0 `-j 1`,
+    /// scratch `t17b/specs/prolog_role_fieldline.json`: only `a.rst:1`
+    /// errors).
+    #[test]
+    fn the_first_read_starts_from_the_fresh_registries() {
+        let config = BuildConfig {
+            rst_prolog: Some(".. role:: red\n\n.. default-role:: math\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            (
+                "index.rst",
+                ":author: :red:`me` `a^2`\n\nIndex\n=====\n\n.. toctree::\n\n   a\n   b\n\n\
+                 Index :red:`i` `x`.\n",
+            ),
+            (
+                "a.rst",
+                ":author: :red:`me` `a^2`\n\nA\n=\n\nEarly :red:`x`.\n",
+            ),
+            (
+                "b.rst",
+                ":author: :red:`me` `b^2`\n\nB\n=\n\nLater :red:`y`.\n",
+            ),
+        ];
+        for jobs in [4, 1] {
+            let (_, warnings, reparsed) = build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(
+                warnings,
+                [
+                    "Unknown interpreted text role \"red\".",
+                    "Bibliographic field \"author\"\nmust contain a single <paragraph>, not a \
+                     <paragraph>.",
+                ],
+                "-j {jobs}"
+            );
+            // `a` read first, from the fresh registries, and the others
+            // from the baseline: the parallel parses stand.
+            assert_eq!(reparsed, 0, "-j {jobs}");
+        }
+    }
+
+    /// Decision 14's schedule as a unit ([`ReadSchedule::plan`]): the
+    /// parallel parses stand while each document started from the
+    /// registry Sphinx's read in sorted docname order gives it, the fresh
+    /// one for the first and the one the document before left for every
+    /// other; otherwise the first that did not, and every document after
+    /// it, are read again. And the build's re-read threads the registry
+    /// from document to document: `c` uses `blue`, which `b` defines over
+    /// `a`'s `red`, so `b` must be read from `a`'s registry and `c` from
+    /// `b`'s.
+    #[test]
+    fn read_schedule_follows_role_table_changes() {
+        use crate::rst::roles::{RoleFn, RoleTable};
+        let fresh = RoleTable::sphinx();
+        let mut red = RoleTable::sphinx();
+        red.register_local("red", RoleFn::GenericCustom);
+        let mut math = RoleTable::sphinx();
+        math.set_default(Some(RoleFn::Math));
+        let plan =
+            |starts: &[&RoleTable], after: &[&RoleTable]| ReadSchedule::plan(&fresh, starts, after);
+        assert_eq!(plan(&[], &[]), ReadSchedule::Parallel);
+        assert_eq!(
+            plan(&[&fresh; 3], &[&fresh, &fresh, &fresh]),
+            ReadSchedule::Parallel
+        );
+        assert_eq!(
+            plan(&[&fresh; 4], &[&fresh, &red, &red, &math]),
+            ReadSchedule::Reparse { from: 2 }
+        );
+        assert_eq!(
+            plan(&[&fresh; 2], &[&math, &math]),
+            ReadSchedule::Reparse { from: 1 }
+        );
+        // What the last document leaves reaches no document of this read.
+        assert_eq!(plan(&[&fresh; 2], &[&fresh, &red]), ReadSchedule::Parallel);
+        // The first document read starts from the fresh registry: one that
+        // started from another is read again, and every document after it.
+        assert_eq!(
+            plan(&[&red, &red], &[&red, &red]),
+            ReadSchedule::Reparse { from: 0 }
+        );
+        // `rst_prolog`'s own definitions: every document makes them again,
+        // so each one after the first starts from the registry they leave
+        // (the build's baseline), and the parallel parses stand.
+        let mut prolog = RoleTable::sphinx();
+        prolog.register_local("button", RoleFn::GenericCustom);
+        assert_eq!(
+            plan(&[&fresh, &prolog, &prolog], &[&prolog, &prolog, &prolog]),
+            ReadSchedule::Parallel
+        );
+
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+            ),
+            ("a.rst", "A\n=\n\n.. role:: red\n"),
+            ("b.rst", "B\n=\n\n.. role:: blue(red)\n"),
+            ("c.rst", "C\n=\n\nUse :blue:`z`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings) = build_roles_project(&files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(
+                paragraph(&resolved, "c")[..3],
+                [
+                    "            Use ",
+                    "            <inline classes=\"blue\">",
+                    "                z"
+                ],
+                "-j {jobs}"
+            );
+        }
+    }
+
+    /// Decision 14 parses a document again when one read before it changed
+    /// the role registries, and the cache stores each parsed document once,
+    /// as the schedule left it: here `a` changes them, so `b`, `c` and
+    /// `index` are parsed twice and stored once each, four stores in all.
+    /// A warm build then recovers all four.
+    #[test]
+    fn a_reparsed_document_is_stored_once() {
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+            ),
+            ("a.rst", "A\n=\n\n.. role:: red\n"),
+            ("b.rst", "B\n=\n\nUse :red:`b`.\n"),
+            ("c.rst", "C\n=\n\nUse :red:`c`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let tmp = TempDir::new().unwrap();
+            let source_dir = tmp.path().join("src");
+            std::fs::create_dir_all(&source_dir).unwrap();
+            for (path, text) in files {
+                std::fs::write(source_dir.join(path), text).unwrap();
+            }
+            let build = || {
+                let config = BuildConfig {
+                    validate_directives: false,
+                    ..BuildConfig::default()
+                };
+                let mut builder =
+                    SphinxBuilder::new(config, source_dir.clone(), tmp.path().join("out")).unwrap();
+                builder.set_parallel_jobs(jobs);
+                builder.enable_incremental();
+                let stats = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(builder.build())
+                    .unwrap();
+                (stats.cache_hits, builder.cache.store_count())
+            };
+            assert_eq!(build(), (0, 4), "cold, -j {jobs}");
+            assert_eq!(build(), (4, 0), "warm, -j {jobs}");
+        }
+    }
+
     /// `-W` and `-n` steer diagnostics, not content: toggling either must
     /// leave the fingerprint — and therefore the whole cache directory —
     /// alone. Sphinx cannot invalidate on either (`config.py:272` gives
@@ -2364,6 +3270,17 @@ mod tests {
             "source_encoding"
         );
 
+        // So is `source_suffix` (`config.py:243`), whose order is data: it
+        // decides which suffix `doc2path` appends.
+        let suffixed = |suffixes: serde_json::Value| BuildConfig {
+            source_suffix: crate::config::SourceSuffix::from_conf_value(&suffixes).unwrap(),
+            ..base.clone()
+        };
+        let rst_txt = config_fingerprint(&suffixed(serde_json::json!([".rst", ".txt"]))).unwrap();
+        let txt_rst = config_fingerprint(&suffixed(serde_json::json!([".txt", ".rst"]))).unwrap();
+        assert_ne!(rst_txt, baseline, "source_suffix");
+        assert_ne!(rst_txt, txt_rst, "source_suffix order");
+
         // ...while the config-inited diagnostic record is not configuration
         // at all, and must not invalidate anything.
         let mut mismatched = base.clone();
@@ -2372,6 +3289,16 @@ mod tests {
             config_fingerprint(&mismatched).unwrap(),
             baseline,
             "confval_type_mismatches"
+        );
+        // A prolog Sphinx's reader crashes on, which the typed field reads
+        // as `None`, changes every read: Sphinx re-reads every document
+        // when it changes, so the cache must miss.
+        let mut crashing = base.clone();
+        crashing.decoration_crashes = vec![("rst_prolog".to_string(), "int".to_string())];
+        assert_ne!(
+            config_fingerprint(&crashing).unwrap(),
+            baseline,
+            "decoration_crashes"
         );
 
         let mut nitpick_ignore = base.clone();
@@ -2385,6 +3312,70 @@ mod tests {
         let mut numfig = base.clone();
         numfig.numfig = true;
         assert_ne!(config_fingerprint(&numfig).unwrap(), baseline, "numfig");
+
+        // The read-side keys of wave 5a T17a are rebuild class `'env'`
+        // (`config.py:247`, `:271`, `:282-285`).
+        for (key, changed) in [
+            (
+                "default_role",
+                BuildConfig {
+                    default_role: Some("any".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "manpages_url",
+                BuildConfig {
+                    manpages_url: Some("https://man/{page}".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_number_all",
+                BuildConfig {
+                    math_number_all: true,
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_eqref_format",
+                BuildConfig {
+                    math_eqref_format: Some("Eq. {number}".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_numfig",
+                BuildConfig {
+                    math_numfig: false,
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_numsep",
+                BuildConfig {
+                    math_numsep: "-".to_string(),
+                    ..base.clone()
+                },
+            ),
+            // T17b's keys (`config.py:265-266`).
+            (
+                "rst_prolog",
+                BuildConfig {
+                    rst_prolog: Some(".. |a| replace:: A\n".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "rst_epilog",
+                BuildConfig {
+                    rst_epilog: Some(String::new()),
+                    ..base.clone()
+                },
+            ),
+        ] {
+            assert_ne!(config_fingerprint(&changed).unwrap(), baseline, "{key}");
+        }
 
         // Both warning-stream keys are rebuild class `'env'`
         // (`config.py:262-263`): a warm build replays no read-phase record,
@@ -2423,6 +3414,31 @@ mod tests {
             config_fingerprint(&untrimmed).unwrap(),
             baseline,
             "trim_doctest_flags"
+        );
+
+        // The smart-quotes keys are rebuild class `'env'`
+        // (`config.py:289-295`): SmartQuotes (750) runs in the read.
+        let mut straight = base.clone();
+        straight.smartquotes = false;
+        assert_ne!(
+            config_fingerprint(&straight).unwrap(),
+            baseline,
+            "smartquotes"
+        );
+        let mut action = base.clone();
+        action.smartquotes_action = "q".to_string();
+        assert_ne!(
+            config_fingerprint(&action).unwrap(),
+            baseline,
+            "smartquotes_action"
+        );
+        let mut excludes = base.clone();
+        excludes.smartquotes_excludes.builders =
+            crate::config::ExcludedNames::Text("html".to_string());
+        assert_ne!(
+            config_fingerprint(&excludes).unwrap(),
+            baseline,
+            "smartquotes_excludes"
         );
 
         // `today` and `today_fmt` are rebuild class `'env'`
@@ -2818,6 +3834,9 @@ mod tests {
     /// default rule. The `sphinx_rtd_theme` value is from
     /// `BuildInfo(app.config, app.tags, {'html'})` over the same config,
     /// because Sphinx cannot load that theme in the oracle environment.
+    /// `stable_hash` hashes `str()` of a float, its `repr()`: `1e+16`,
+    /// `1e-05`, `1.5e+17`, `1e-07`, `1.0`, whether the literal spells its
+    /// exponent with a sign or not.
     #[test]
     fn buildinfo_config_hash_matches_sphinx_for_configured_values() {
         let cases = [
@@ -2857,6 +3876,22 @@ mod tests {
             (
                 "project = 'Fixture'\nhtml_theme_options = {'nosidebar': True}\n",
                 "a2a03cb33b0b36892e5a3836146f8e60",
+            ),
+            (
+                "project = 'Fixture'\nhtml_context = {'a': 1e16, 'b': 0.00001}\n",
+                "331b237fdfa68d15a92ce0941673f23f",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme_options = {'w': 1.5e17, 'x': 0.0000001, 'y': 1.0}\n",
+                "720f1792bff65e847089cadb967c5a1d",
+            ),
+            (
+                "project = 'Fixture'\nhtml_context = {'a': 1e-05, 'b': -1e-07, 'c': 1e+16}\n",
+                "f61e44fa098222f240ecbdf89dc96a4d",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme_options = {'w': 1.5e17, 'x': -1e-07, 'y': 1.0}\n",
+                "44dc13739b758fbdb1b29f3ea837b267",
             ),
             (
                 "project = 'Fixture'\nhtml_last_updated_fmt = '%Y'\n",

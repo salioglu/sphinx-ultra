@@ -3051,9 +3051,1275 @@
       "name": "sx_image.figure_name",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <figure ids=\"myfig\" names=\"myfig\">\n        <image candidates=\"{'*': 'pic.png'}\" uri=\"pic.png\">\n        <caption>\n            Caption.\n",
       "rst": ".. figure:: pic.png\n   :name: myfig\n\n   Caption.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.basic_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"quoted\" and 'single' and it's and 80's and the '80s.\n",
+      "rst": "\"quoted\" and 'single' and it's and 80's and the '80s.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.dashes_ellipsis",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n",
+      "rst": "En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.nested_and_adjacent_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n",
+      "rst": "\"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.context_punctuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n",
+      "rst": "He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.apostrophes_decades",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n",
+      "rst": "The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.inline_markup_adjacency",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <emphasis>\n            \"emph\"\n         and \"\n        <emphasis>\n            emph\n        \" and \n        <strong>\n            \"strong\"\n         and \"\n        <strong>\n            strong\n        \".\n    <paragraph>\n        word*\"emph\"* and \n        <emphasis>\n            emph\n        \"after\" and \n        <literal>\n            \"literal\"\n         and \"\n        <literal>\n            literal\n        \".\n    <paragraph>\n        x \n        <literal>\n            lit\n         \"after literal\" and x \n        <literal>\n            lit\n        \"after literal\" and \n        <emphasis>\n            emph\n        's.\n",
+      "rst": "A *\"emph\"* and \"*emph*\" and **\"strong\"** and \"**strong**\".\n\nword*\"emph\"* and *emph*\"after\" and ``\"literal\"`` and \"``literal``\".\n\nx ``lit`` \"after literal\" and x ``lit``\"after literal\" and *emph*'s.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.backslash_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"escaped double\" and 'escaped single' and it's.\n    <paragraph>\n        Escaped dashes -- and -- and ellipsis ... and ... done.\n    <paragraph>\n        Backslash then quote \\\"x\" and escaped space x\"y\" and 'a'.\n    <paragraph>\n        Escaped letter \"a\" and `backtick` done.\n",
+      "rst": "\\\"escaped double\\\" and \\'escaped single\\' and it\\'s.\n\nEscaped dashes \\-\\- and \\-- and ellipsis \\.\\.\\. and \\... done.\n\nBackslash then quote \\\\\"x\" and escaped space x\\ \"y\" and '\\a'.\n\nEscaped letter \"\\a\" and \\`backtick\\` done.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_whitespace_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        a\"b\" and \"c\" and x\"y\" end\n",
+      "rst": "a\\ \"b\" and \"\\ c\" and x\\\n\"y\" end\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_quote_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Escaped-quote context \"\"x\" and ''y' and x\"-- z.\n",
+      "rst": "Escaped-quote context \\\"\"x\" and \\''y' and x\\\"-- z.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.title_with_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"\"title\"\\ --\\ --\">\n        <title>\n            \"Title\" -- --\n        <paragraph>\n            Body.\n",
+      "rst": "\\\"Title\\\" -- \\-\\-\n==================\n\nBody.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.literal_entities",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n",
+      "rst": "Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.docutils_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <emphasis>\n            \"e\"\n         \n        <strong>\n            \"s\"\n         \n        <title_reference>\n            \"t\"\n         \n        <superscript>\n            \"u\"\n         \n        <subscript>\n            \"d\"\n         \n        <emphasis>\n            \"E\"\n",
+      "rst": ":emphasis:`\"e\"` :strong:`\\\"s\\\"` :title-reference:`\"t\"` :sup:`\"u\"` :sub:`\"d\"` :emphasis:`\\\"E\\\"`\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.xref_explicit_titles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\" -- x\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nodoc\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                \"D\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"\"term\" -- t\" reftype=\"term\" refwarn=\"1\">\n            <inline classes=\"xref std std-term\">\n                \"term\" -- t\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                a\\'b\n",
+      "rst": ":ref:`\"T\" -- x <nolabel>` :doc:`\"D\" <nodoc>` :ref:`\\\"T\\\" <nolabel>` :term:`\"term\" -- t` :ref:`a\\\\'b <nolabel>`\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.xref_in_title_double_pass",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-a-b-x\" names=\"title\\ a\\\\'b\\ x\">\n        <title>\n            Title \n            <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n                <inline classes=\"xref std std-ref\">\n                    a\\'b\n             x\n",
+      "rst": "Title :ref:`a\\\\'b <nolabel>` x\n------------------------------\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.block_elements",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-here\" names=\"\"title\"\\ --\\ here\">\n        <title>\n            \"Title\" -- here\n        <rubric>\n            \"Rubric\" -- r\n        <topic>\n            <title>\n                \"Topic\" title\n            <paragraph>\n                \"Topic\" body.\n        <sidebar>\n            <title>\n                \"Side\" title\n            <subtitle>\n                \"Sub\" title\n            <paragraph>\n                \"Side\" body.\n        <admonition classes=\"admonition-admonition-title\">\n            <title>\n                \"Admonition\" title\n            <paragraph>\n                \"Admonition\" body...\n        <note>\n            <paragraph>\n                \"Note\" -- body...\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    Term \"one\"\n                <definition>\n                    <paragraph>\n                        Definition \"one\".\n            <definition_list_item>\n                <term>\n                    Term\n                <classifier>\n                    \"classifier\"\n                <classifier>\n                    'c2'\n                <definition>\n                    <paragraph>\n                        Definition.\n        <field_list>\n            <field>\n                <field_name>\n                    Field \"name\"\n                <field_body>\n                    <paragraph>\n                        Field \"body\".\n        <line_block>\n            <line>\n                Line \"one\" ends\n            <line>\n                \"Line\" two\n        <block_quote>\n            <paragraph>\n                \"Quote\" body.\n            <attribution>\n                \"Attribution\"\n",
+      "rst": "\"Title\" -- here\n===============\n\n.. rubric:: \"Rubric\" -- r\n\n.. topic:: \"Topic\" title\n\n   \"Topic\" body.\n\n.. sidebar:: \"Side\" title\n   :subtitle: \"Sub\" title\n\n   \"Side\" body.\n\n.. admonition:: \"Admonition\" title\n\n   \"Admonition\" body...\n\n.. note:: \"Note\" -- body...\n\nTerm \"one\"\n   Definition \"one\".\n\nTerm : \"classifier\" : 'c2'\n   Definition.\n\n:Field \"name\": Field \"body\".\n\n| Line \"one\" ends\n| \"Line\" two\n\n   \"Quote\" body.\n\n   -- \"Attribution\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.skipped_blocks",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        \"literal block\" -- x...\n    <literal_block xml:space=\"preserve\">\n        \"parsed\" \n        <emphasis>\n            \"literal\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\"\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = \"code\"\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        \"math\"\n    <comment xml:space=\"preserve\">\n        comment \"comment\" -- x\n",
+      "rst": "::\n\n   \"literal block\" -- x...\n\n.. parsed-literal::\n\n   \"parsed\" *\"literal\"* :ref:`\"T\" <nolabel>`\n\n.. code-block:: python\n\n   x = \"code\"\n\n.. math::\n\n   \"math\"\n\n.. comment \"comment\" -- x\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.option_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --opt\n                    <option_argument delimiter=\"=\">\n                        value\n            <description>\n                <paragraph>\n                    Desc \"one\" -- x.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n                    <option_argument delimiter=\" \">\n                        arg\n            <description>\n                <paragraph>\n                    Desc 'two'.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --long\n                    <option_argument delimiter=\"=\">\n                        <\"q\">\n            <description>\n                <paragraph>\n                    Desc it's.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --a\n                <option>\n                    <option_string>\n                        --b\n            <description>\n                <paragraph>\n                    Two --options.\n",
+      "rst": "--opt=value      Desc \"one\" -- x.\n-x arg           Desc 'two'.\n--long=<\"q\">     Desc it's.\n--a, --b         Two --options.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.standalone_uri_and_email",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <reference refuri=\"https://example.org/a--b/c---d/e...f\">\n            https://example.org/a--b/c---d/e...f\n         and \n        <reference refuri=\"mailto:user--x@example.org\">\n            user--x@example.org\n         and \n        <reference refuri=\"https://example.org/it's\">\n            https://example.org/it's\n        .\n",
+      "rst": "See https://example.org/a--b/c---d/e...f and user--x@example.org and https://example.org/it's.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.inline_target",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        An \n        <target ids=\"inline-target\" names=\"\"inline\"\\ target\">\n            \"inline\" target\n         and \n        <reference name=\"\"phrase\"\" refuri=\"https://example.org/p--q\">\n            \"phrase\"\n        <target ids=\"phrase\" names=\"\"phrase\"\" refuri=\"https://example.org/p--q\">\n         here.\n",
+      "rst": "An _`\"inline\" target` and `\"phrase\" <https://example.org/p--q>`_ here.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.language_classes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"language-de\">\n        \"Deutsch\" und 'einfach'.\n    <paragraph classes=\"language-fr\">\n        \"Français\" et 'simple'.\n    <paragraph classes=\"language-xx\">\n        \"Unknown\" it's -- y... the '80s.\n    <paragraph classes=\"language-xx\">\n        \"Unknown\" again.\n    <container classes=\"language-ja\">\n        <paragraph>\n            \"Japanese\" 'x'.\n    <paragraph>\n        \"English\" again.\n",
+      "rst": ".. rst-class:: language-de\n\n\"Deutsch\" und 'einfach'.\n\n.. rst-class:: language-fr\n\n\"Français\" et 'simple'.\n\n.. rst-class:: language-xx\n\n\"Unknown\" it's -- y... the '80s.\n\n.. rst-class:: language-xx\n\n\"Unknown\" again.\n\n.. container:: language-ja\n\n   \"Japanese\" 'x'.\n\n\"English\" again.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.py_docfields",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        x\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'a'\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        y\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'b'\n            <desc_returns xml:space=\"preserve\">\n                <desc_sig_literal_string classes=\"s\">\n                    'R'\n        <desc_content>\n            <paragraph>\n                Function \"body\" -- text.\n            <field_list>\n                <field>\n                    <field_name>\n                        Parameters\n                    <field_body>\n                        <bullet_list>\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        x\n                                     (\n                                    <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"str\" reftype=\"class\">\n                                        <literal_emphasis>\n                                            str\n                                    )\n                                     -- \n                                    The \"x\" -- param\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        y\n                                     (\n                                    <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"str\" reftype=\"class\">\n                                        <literal_emphasis>\n                                            str\n                                    )\n                                     -- \n                                    The 'y'\n                <field>\n                    <field_name>\n                        Returns\n                    <field_body>\n                        <paragraph>\n                            \"ret\" value\n                <field>\n                    <field_name>\n                        Return type\n                    <field_body>\n                        <paragraph>\n                            <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"int\" reftype=\"class\">\n                                int\n                <field>\n                    <field_name>\n                        Raises\n                    <field_body>\n                        <paragraph>\n                            <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"ValueError\" reftype=\"exc\">\n                                <literal_strong>\n                                    ValueError\n                             -- \n                            if \"bad\"\n",
+      "rst": ".. py:function:: f(x=\"a\", y='b') -> \"R\"\n\n   Function \"body\" -- text.\n\n   :param x: The \"x\" -- param\n   :type x: str\n   :param str y: The 'y'\n   :returns: \"ret\" value\n   :rtype: int\n   :raises ValueError: if \"bad\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.deprecated_seealso_glossary",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"deprecated\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 2.0: \n            \"Deprecated\" -- now\n    <seealso>\n        <paragraph>\n            \"See\" this.\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-Term-x\">\n                    \"Term\" -- x\n                    <index entries=\"('single',\\ '\"Term\"\\ --\\ x',\\ 'term-Term-x',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Def \"x\".\n",
+      "rst": ".. deprecated:: 2.0 \"Deprecated\" -- now\n\n.. seealso:: \"See\" this.\n\n.. glossary::\n\n   \"Term\" -- x\n      Def \"x\".\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.skipped_inline_nodes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <literal>\n            \"lit\"\n         and \n        <math>\n            \"m\"\n         and \n        <title_reference>\n            \"title ref\"\n         and \n        <literal classes=\"code\" language=\"\">\n            \"code\"\n        .\n",
+      "rst": "A :literal:`\"lit\"` and :math:`\"m\"` and `\"title ref\"` and :code:`\"code\"`.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.tables",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"11\">\n            <colspec colwidth=\"11\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            \"grid\"\n                    <entry>\n                        <paragraph>\n                            'cell'\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            it's\n                    <entry>\n                        <paragraph>\n                            a -- b\n    <table ids=\"id1\">\n        <title>\n            \"List\" table\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            \"a\"\n                    <entry>\n                        <paragraph>\n                            'b'\n",
+      "rst": "+-----------+-----------+\n| \"grid\"    | 'cell'    |\n+===========+===========+\n| it's      | a -- b    |\n+-----------+-----------+\n\n.. list-table:: \"List\" table\n\n   * - \"a\"\n     - 'b'\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.system_message_paragraphs",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. bogus:: x\n    <paragraph>\n        Text \n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed \"q\".\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": ".. bogus:: x\n\nText *unclosed \"q\".\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.substitution_definition_unreferenced",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"x\">\n        \"plain\" -- x\n    <substitution_definition names=\"y\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\" -- t\n         and \"plain\"\n",
+      "rst": ".. |x| replace:: \"plain\" -- x\n.. |y| replace:: :ref:`\"T\" -- t <nolabel>` and \"plain\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.versionmodified_cross_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph ends here\n        <paragraph>\n            \"Second\" paragraph.\n",
+      "rst": ".. versionadded:: 1.0\n   First paragraph ends here\n\n   \"Second\" paragraph.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.substitution_in_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Before \n        \"replaced\" -- text\n         after and \n        it's\n        .\n    <substitution_definition names=\"sub\">\n        \"replaced\" -- text\n    <substitution_definition names=\"it\">\n        it's\n",
+      "rst": "Before |sub| after and |it|.\n\n.. |sub| replace:: \"replaced\" -- text\n.. |it| replace:: it's\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.footnote_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Auto \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            2\n        \"quoted\" and \n        <footnote_reference docname=\"index\" ids=\"id2\" refid=\"id4\">\n            1\n        's.\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            Auto \"footnote\".\n    <footnote backrefs=\"id2\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Numbered.\n",
+      "rst": "Auto [#]_\"quoted\" and [1]_'s.\n\n.. [#] Auto \"footnote\".\n.. [1] Numbered.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_whitespace_between_inlines",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <emphasis>\n            a\n        <emphasis>\n            \"b\"\n         and \n        <strong>\n            c\n        <literal>\n            d\n        \"e\" and \n        <emphasis>\n            f\n        <emphasis>\n            \"g\"\n",
+      "rst": "*a*\\ *\"b\"* and **c**\\ ``d``\\ \"e\" and *f*\\\n*\"g\"*\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.generic_docroles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal_strong classes=\"command\">\n            ls -l\n         \n        <emphasis classes=\"dfn\">\n            term\n         \n        <literal_emphasis classes=\"mailheader\">\n            Content-Type\n         \n        <literal_strong classes=\"makevar\">\n            CFLAGS\n         \n        <literal_emphasis classes=\"mimetype\">\n            text/plain\n         \n        <literal_emphasis classes=\"newsgroup\">\n            comp.lang.python\n         \n        <literal_strong classes=\"program\">\n            sphinx-build\n         \n        <literal classes=\"regexp\">\n            ^a.*b$\n",
+      "rst": ":command:`ls -l` :dfn:`term` :mailheader:`Content-Type` :makevar:`CFLAGS` :mimetype:`text/plain` :newsgroup:`comp.lang.python` :program:`sphinx-build` :regexp:`^a.*b$`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.generic_docroles_escapes_case",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal_strong classes=\"command\">\n            a*b `x`\n    <paragraph>\n        <literal_strong classes=\"program\">\n            !prog\n         \n        <emphasis classes=\"dfn\">\n            a <b>\n    <paragraph>\n        <literal_strong classes=\"command\">\n            upper\n         \n        <literal_strong classes=\"makevar\">\n            suffix\n",
+      "rst": ":command:`a\\*b \\`x\\``\n\n:program:`!prog` :dfn:`a <b>`\n\n:COMMAND:`upper` `suffix`:makevar:\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.kbd_compound",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            C\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            Alt\n        +\n        <literal classes=\"kbd\">\n            Del\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        -\n        <literal classes=\"kbd\">\n            x\n         \n        <literal classes=\"kbd\">\n            Ctrl\n        -\n        <literal classes=\"kbd\">\n            f\n",
+      "rst": ":kbd:`Ctrl`\n\n:kbd:`Ctrl+C`\n\n:kbd:`Ctrl+Alt+Del`\n\n:kbd:`Ctrl-x Ctrl-f`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.kbd_multiword",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd\">\n            Caps Lock\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            Page Up\n    <paragraph>\n        <literal classes=\"kbd\">\n            Page Up+Ctrl\n    <paragraph>\n        <literal classes=\"kbd\">\n            back  space\n    <paragraph>\n        <literal classes=\"kbd\">\n            Num Lock+x\n",
+      "rst": ":kbd:`Caps Lock`\n\n:kbd:`Ctrl+Page Up`\n\n:kbd:`Page Up+Ctrl`\n\n:kbd:`back  space`\n\n:kbd:`Num Lock+x`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.kbd_separator_edges",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd\">\n            -\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            -\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            +\n    <paragraph>\n        <literal classes=\"kbd\">\n            Shift\n         \n        <literal classes=\"kbd\">\n        ^\n        <literal classes=\"kbd\">\n         \n        <literal classes=\"kbd\">\n            A\n    <paragraph>\n        <literal classes=\"kbd\">\n            a\n          \n        <literal classes=\"kbd\">\n            b\n    <paragraph>\n        <literal classes=\"kbd\">\n            M\n        -\n        <literal classes=\"kbd\">\n            x\n          \n        <literal classes=\"kbd\">\n            M\n        -\n        <literal classes=\"kbd\">\n            y\n    <paragraph>\n        <literal classes=\"kbd\">\n            a\n        +\n        <literal classes=\"kbd\">\n            b\n",
+      "rst": ":kbd:`-`\n\n:kbd:`Ctrl+-`\n\n:kbd:`Ctrl++`\n\n:kbd:`Shift ^ A`\n\n:kbd:`a  b`\n\n:kbd:`M-x  M-y`\n\n:kbd:`a\\+b`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.kbd_newline",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd\">\n            Ctrl\n            +\n         \n        <literal classes=\"kbd\">\n            Q\n",
+      "rst": ":kbd:`Ctrl\n+ Q`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.guilabel_accelerators",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`&Cancel`\">\n            <inline classes=\"accelerator\">\n                C\n            ancel\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`O&K`\">\n            O\n            <inline classes=\"accelerator\">\n                K\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`Save && Exit`\">\n            Save && Exit\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`A & B`\">\n            A & B\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`\\&Esc`\">\n            <inline classes=\"accelerator\">\n                E\n            sc\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`&&&Foo`\">\n            &&&Foo\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`Plain`\">\n            Plain\n",
+      "rst": ":guilabel:`&Cancel`\n\n:guilabel:`O&K`\n\n:guilabel:`Save && Exit`\n\n:guilabel:`A & B`\n\n:guilabel:`\\&Esc`\n\n:guilabel:`&&&Foo`\n\n:guilabel:`Plain`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.menuselection",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <inline classes=\"menuselection\" rawtext=\":menuselection:`Start --> Programs`\">\n            Start ‣ Programs\n    <paragraph>\n        <inline classes=\"menuselection\" rawtext=\":menuselection:`&File --> &Open`\">\n            <inline classes=\"accelerator\">\n                F\n            ile ‣ \n            <inline classes=\"accelerator\">\n                O\n            pen\n    <paragraph>\n        <inline classes=\"menuselection\" rawtext=\":menuselection:`A-->B`\">\n            A‣B\n    <paragraph>\n        <inline classes=\"menuselection\" rawtext=\":menuselection:`A --> B --> C`\">\n            A ‣ B ‣ C\n    <paragraph>\n        <inline classes=\"menuselection\" rawtext=\":menuselection:`A -> B`\">\n            A -> B\n",
+      "rst": ":menuselection:`Start --> Programs`\n\n:menuselection:`&File --> &Open`\n\n:menuselection:`A-->B`\n\n:menuselection:`A --> B --> C`\n\n:menuselection:`A -> B`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.samp_braces",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            print(\n            <emphasis>\n                x\n            )\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            a\n            <emphasis>\n                b\n            c\n            <emphasis>\n                d\n            e\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            {}\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            <emphasis>\n                a{b\n            c}\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            a}b{c\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            {unclosed\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            plain\n",
+      "rst": ":samp:`print({x})`\n\n:samp:`a{b}c{d}e`\n\n:samp:`{}`\n\n:samp:`{a{b}c}`\n\n:samp:`a}b{c`\n\n:samp:`{unclosed`\n\n:samp:`plain`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.samp_escapes_file",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            a{b}\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            a\n            <emphasis>\n                b\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            x\\y\n    <paragraph>\n        <literal classes=\"file\" role=\"file\">\n            /etc/\n            <emphasis>\n                name\n            .conf\n    <paragraph>\n        <literal classes=\"file\" role=\"file\">\n            C:\\Users{user}\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            Upper\n            <emphasis>\n                X\n",
+      "rst": ":samp:`a\\\\{b\\\\}`\n\n:samp:`a\\{b\\}`\n\n:samp:`x\\\\\\\\y`\n\n:file:`/etc/{name}.conf`\n\n:file:`C:\\\\Users\\\\{user}`\n\n:SAMP:`Upper{X}`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.abbr_explanations",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <abbreviation explanation=\"last-in, first-out\">\n            LIFO\n    <paragraph>\n        <abbreviation>\n            LIFO\n    <paragraph>\n        <abbreviation explanation=\"\">\n            LIFO\n    <paragraph>\n        <abbreviation explanation=\"only explanation\">\n    <paragraph>\n        <abbreviation explanation=\"b) (c\">\n            A\n    <paragraph>\n        <abbreviation explanation=\"multi\nline\">\n            X\n    <paragraph>\n        <abbreviation explanation=\"z\">\n            Y\n",
+      "rst": ":abbr:`LIFO (last-in, first-out)`\n\n:abbr:`LIFO`\n\n:abbr:`LIFO ()`\n\n:abbr:`(only explanation)`\n\n:abbr:`A (b) (c)`\n\n:abbr:`X (multi\nline)`\n\n:abbr:`Y(z)`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.manpage_no_url",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            ls(1)\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls\" section=\"\" xml:space=\"preserve\">\n            ls\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls.1\" section=\"1\" xml:space=\"preserve\">\n            ls.1\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            the ls page\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"!ls\" path=\"!ls(1)\" section=\"1\" xml:space=\"preserve\">\n            ls(1)\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"git-commit\" path=\"git-commit(1posix)\" section=\"1posix\" xml:space=\"preserve\">\n            git-commit(1posix)\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"a b\" path=\"a b(8)\" section=\"8\" xml:space=\"preserve\">\n            a  b(8)\n",
+      "rst": ":manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`ls.1`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n\n:manpage:`git-commit(1posix)`\n\n:manpage:`a  b(8)`\n"
+    },
+    {
+      "conf": {
+        "manpages_url": "https://man.example/{page}.{section}"
+      },
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.manpage_url_page_section",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://man.example/ls.1\">\n                ls(1)\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls\" section=\"\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://man.example/ls.\">\n                ls\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://man.example/ls.1\">\n                the ls page\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"!ls\" path=\"!ls(1)\" section=\"1\" xml:space=\"preserve\">\n            ls(1)\n",
+      "rst": ":manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n"
+    },
+    {
+      "conf": {
+        "manpages_url": "https://m/{page}/{section}/{path}"
+      },
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.manpage_url_none_section",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls(\">\n                ls(\n         \n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls()\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls()\">\n                ls()\n         \n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls.\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls.\">\n                ls.\n         \n        <manpage classes=\"manpage\" page=\"a.b\" path=\"a.b(3)\" section=\"3\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/a.b/3/a.b(3)\">\n                a.b(3)\n         \n        <manpage classes=\"manpage\" page=\"x(0)\" path=\"x(0)\" section=\"\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/x(0)//x(0)\">\n                x(0)\n",
+      "rst": ":manpage:`ls(` :manpage:`ls()` :manpage:`ls.` :manpage:`a.b(3)` :manpage:`x(0)`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.index_role_forms",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <index entries=\"('single',\\ 'term',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        term\n         here.\n    <paragraph>\n        <index entries=\"('single',\\ 'main\\ term',\\ 'index-1',\\ 'main',\\ None)\">\n        <target ids=\"index-1\">\n        main term\n    <paragraph>\n        <index entries=\"('single',\\ 'a;\\ b',\\ 'index-2',\\ '',\\ None)\">\n        <target ids=\"index-2\">\n        see\n    <paragraph>\n        <index entries=\"('pair',\\ 'x;\\ y',\\ 'index-3',\\ '',\\ None)\">\n        <target ids=\"index-3\">\n        pair\n    <paragraph>\n        <index entries=\"('single',\\ 'bogus:\\ x',\\ 'index-4',\\ '',\\ None)\">\n        <target ids=\"index-4\">\n        bad\n    <paragraph>\n        <index entries=\"('single',\\ 'x',\\ 'index-5',\\ '',\\ None)\">\n        <target ids=\"index-5\">\n        text\n",
+      "rst": "Para :index:`term` here.\n\n:index:`!main term`\n\n:index:`see <single: a; b>`\n\n:index:`pair <pair: x; y>`\n\n:index:`bad <bogus: x>`\n\n:index:`text <x>`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.index_role_shorthand",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <index entries=\"('single',\\ 'a',\\ 'index-0',\\ '',\\ None) ('single',\\ 'b',\\ 'index-0',\\ 'main',\\ None) ('single',\\ 'c',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        t\n    <paragraph>\n        <index entries=\"('single',\\ 'x',\\ 'index-1',\\ 'main',\\ None)\">\n        <target ids=\"index-1\">\n        x\n    <paragraph>\n        <index entries=\"('single',\\ '\\ spaced',\\ 'index-2',\\ 'main',\\ None)\">\n        <target ids=\"index-2\">\n         spaced\n    <paragraph>\n        <index entries=\"('seealso',\\ 'p;\\ q',\\ 'index-3',\\ '',\\ None)\">\n        <target ids=\"index-3\">\n        see also\n    <paragraph>\n        <index entries=\"('pair',\\ 'm;\\ n',\\ 'index-4',\\ '',\\ None)\">\n        <target ids=\"index-4\">\n        d\n    <paragraph>\n        <index entries=\"('single',\\ 'z',\\ 'index-5',\\ 'main',\\ None)\">\n        <target ids=\"index-5\">\n        !\n",
+      "rst": ":index:`t <a, !b, , c>`\n\n:index:`!x`\n\n:index:`! spaced`\n\n:index:`see also <seealso: p; q>`\n\n:index:`d <double: m; n>`\n\n:index:`! <!z>`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.index_role_id_not_registered",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\">\n            <target ids=\"index-0\">\n            x\n        <section ids=\"index-0\" names=\"index\\ 0\">\n            <title>\n                Index 0\n            <paragraph>\n                text\n",
+      "rst": "T\n=\n\n:index:`x`\n\nIndex 0\n-------\n\ntext\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.index_alias_unimplemented",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :I:`upper`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Interpreted text role \"I\" not implemented.\n    <paragraph>\n        <problematic ids=\"id4\" refid=\"id3\">\n            :i:`alias`\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Interpreted text role \"i\" not implemented.\n",
+      "rst": ":I:`upper`\n\n:i:`alias`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.pep_rfc_long_names",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <reference refuri=\"https://peps.python.org/pep-0008\">\n            PEP 8\n         and \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 0',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0000/\">\n            <strong>\n                PEP 0\n         and \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 008',\\ 'index-1',\\ '',\\ None)\">\n        <target ids=\"index-1\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                PEP 008\n         end.\n    <paragraph>\n        <reference refuri=\"https://datatracker.ietf.org/doc/html/rfc2822.html\">\n            RFC 2822\n         and \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 0002822',\\ 'index-2',\\ '',\\ None)\">\n        <target ids=\"index-2\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2822.html\">\n            <strong>\n                RFC 0002822\n         and \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 1',\\ 'index-3',\\ '',\\ None)\">\n        <target ids=\"index-3\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc1.html\">\n            <strong>\n                RFC 1\n         end.\n",
+      "rst": ":pep-reference:`8` and :PEP:`0` and :pep:`008` end.\n\n:rfc-reference:`2822` and :RFC:`0002822` and :RFC:`1` end.\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.pep_rfc_invalid_consumes_serial",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :pep:`abc`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            invalid PEP number abc\n    <paragraph>\n        <problematic ids=\"id4\" refid=\"id3\">\n            :rfc:`abc`\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            invalid RFC number abc\n    <paragraph>\n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 10000',\\ 'index-2',\\ '',\\ None)\">\n        <target ids=\"index-2\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-10000/\">\n            <strong>\n                PEP 10000\n    <paragraph>\n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8#anchor',\\ 'index-3',\\ '',\\ None)\">\n        <target ids=\"index-3\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/#anchor\">\n            <strong>\n                PEP 8#anchor\n    <paragraph>\n        <problematic ids=\"id6\" refid=\"id5\">\n            :pep-reference:`10000`\n    <system_message backrefs=\"id6\" ids=\"id5\" level=\"3\" line=\"9\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            PEP number must be a number from 0 to 9999; \"10000\" is invalid.\n",
+      "rst": ":pep:`abc`\n\n:rfc:`abc`\n\n:pep:`10000`\n\n:pep:`8#anchor`\n\n:pep-reference:`10000`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.pep_rfc_edges",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 1\\ Section',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc1.html#section-\">\n            <strong>\n                RFC 1 Section\n         \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 1#Section-2',\\ 'index-1',\\ '',\\ None)\">\n        <target ids=\"index-1\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc1.html#Section-2\">\n            <strong>\n                RFC 1#Section-2\n         \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ \\ 8\\ ',\\ 'index-2',\\ '',\\ None)\">\n        <target ids=\"index-2\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                x\n         \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 2\\ \\ Page\\ 3',\\ 'index-3',\\ '',\\ None)\">\n        <target ids=\"index-3\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2.html#page-3\">\n            <strong>\n                RFC 2  Page 3\n",
+      "rst": ":rfc:`1#section-` :rfc:`1#Section-2` :pep:`x < 8 >` :rfc:`2 #page-3`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.code_role_sphinx",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            x = 1\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            a*b\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            a\\b\n",
+      "rst": ":code:`x = 1`\n\n:code:`a\\*b`\n\n:code:`a\\\\b`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.role_directive_code",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"code highlight python\" language=\"python\">\n            print(1)\n    <paragraph>\n        <literal classes=\"code plain\" language=\"\">\n            y\n",
+      "rst": ".. role:: python(code)\n   :language: python\n\n.. role:: plain(code)\n\n:python:`print(1)`\n\n:plain:`y`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.role_directive_over_sphinx_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd big\">\n            Ctrl\n        +\n        <literal classes=\"kbd big\">\n            C\n         \n        <literal classes=\"s\" role=\"s\">\n            a\n            <emphasis>\n                b\n         \n        <inline classes=\"red\">\n            alert\n         \n        <literal classes=\"code highlight x python3\" language=\"python3\">\n            x=1\n         \n        <inline classes=\"g\" rawtext=\":g:`&OK`\">\n            <inline classes=\"accelerator\">\n                O\n            K\n         \n        <inline classes=\"m\" rawtext=\":m:`A --> B`\">\n            A ‣ B\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" reftype=\"d\" refwarn=\"0\">\n            <literal classes=\"xref d\">\n                f.txt\n         \n        <literal_strong classes=\"extra\">\n            ls\n         \n        <abbreviation classes=\"ab\" explanation=\"b\">\n            A\n         \n        <manpage classes=\"mp\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            ls(1)\n         \n        <index entries=\"('single',\\ 'entry',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        entry\n         \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-1',\\ '',\\ None)\">\n        <target ids=\"index-1\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                PEP 8\n",
+      "rst": ".. role:: k(kbd)\n   :class: big\n\n.. role:: s(samp)\n\n.. role:: red\n\n.. role:: py3(code)\n   :language: python3\n   :class: x\n\n.. role:: g(guilabel)\n\n.. role:: m(menuselection)\n\n.. role:: d(download)\n\n.. role:: cmd(command)\n   :class: extra\n\n.. role:: ab(abbr)\n\n.. role:: mp(manpage)\n\n.. role:: idx(index)\n\n.. role:: p8(pep)\n\n:k:`Ctrl+C` :s:`a{b}` :red:`alert` :py3:`x=1` :g:`&OK` :m:`A --> B`\n\n:d:`f.txt` :cmd:`ls` :ab:`A (b)` :mp:`ls(1)` :idx:`entry` :p8:`8`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.role_directive_over_reference_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"g\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                g()\n         \n        <pending_xref refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"y\" reftype=\"a\" refwarn=\"1\">\n            <literal classes=\"xref a\">\n                y\n",
+      "rst": ".. role:: f(py:func)\n\n.. role:: a(any)\n\n:f:`g` :a:`y`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.unknown_domain_std_fallback",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"lbl\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                lbl\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"index\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                index\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"lbl\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                lbl\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"index\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                index\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"-x\" reftype=\"option\" refwarn=\"1\" std:program=\"True\">\n            <literal classes=\"xref std std-option\">\n                -x\n",
+      "rst": ":foo:ref:`lbl` :FOO:Doc:`index` :py:ref:`lbl` :js:doc:`index` :c:option:`-x`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.disabled_xrefs",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <inline classes=\"xref std std-ref\">\n            label\n         \n        <inline classes=\"xref std std-doc\">\n            page\n         \n        <inline classes=\"xref std std-term\">\n            x\n         \n        <literal classes=\"xref any\">\n            y\n         \n        <literal classes=\"xref std std-keyword\">\n            k\n         \n        <literal classes=\"xref std std-numref\">\n            n\n    <paragraph>\n        <literal classes=\"xref std std-option\">\n            -x\n         \n        <literal classes=\"xref std std-envvar\">\n            HOME\n         \n        <literal classes=\"xref std std-confval\">\n            c\n         \n        <literal classes=\"xref std std-token\">\n            t\n    <paragraph>\n        <literal classes=\"xref py py-func\">\n            f()\n         \n        <literal classes=\"xref py py-meth\">\n            m()\n         \n        <literal classes=\"xref py py-func\">\n            g()\n         \n        <literal classes=\"xref py py-class\">\n            ~a.B\n         \n        <literal classes=\"xref eq\" refdomain=\"math\">\n            e\n",
+      "rst": ":ref:`!label` :doc:`!page` :term:`!x` :any:`!y` :keyword:`!k` :numref:`!n`\n\n:option:`!-x` :envvar:`!HOME` :confval:`!c` :token:`!t`\n\n:py:func:`!f` :py:meth:`!m()` :func:`!g` :py:class:`!~a.B` :eq:`!e`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.explicit_title_regex",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"b> <c\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                a\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"x <y>\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                x <y>\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"q\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                p\n    <paragraph>\n        <manpage classes=\"manpage\" page=\"u(1)> <v\" path=\"u(1)> <v(2)\" section=\"2\" xml:space=\"preserve\">\n            t\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"1\" reftarget=\"m <o>\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                n\n",
+      "rst": ":doc:`a <b> <c>`\n\n:doc:`x \\<y>`\n\n:doc:`p\\ <q>`\n\n:manpage:`t <u(1)> <v(2)>`\n\n:download:`n <m <o>>`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.non_reference_roles_ignore_titles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <literal classes=\"kbd\">\n            a\n         \n        <literal classes=\"kbd\">\n            <b>\n    <paragraph>\n        <inline classes=\"guilabel\" rawtext=\":guilabel:`x <y>`\">\n            x <y>\n    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            x <\n            <emphasis>\n                y\n            >\n    <paragraph>\n        <abbreviation explanation=\"z\">\n            x <y>\n    <paragraph>\n        <literal_strong classes=\"program\">\n            a\n            b\n",
+      "rst": ":kbd:`a <b>`\n\n:guilabel:`x <y>`\n\n:samp:`x <{y}>`\n\n:abbr:`x <y> (z)`\n\n:program:`a\nb`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.other_domain_xref_shapes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"rst\" refexplicit=\"0\" reftarget=\"code-block\" reftype=\"dir\" refwarn=\"0\">\n            <literal classes=\"xref rst rst-dir\">\n                code-block\n         \n        <pending_xref refdoc=\"index\" refdomain=\"rst\" refexplicit=\"0\" reftarget=\"kbd\" reftype=\"role\" refwarn=\"0\">\n            <literal classes=\"xref rst rst-role\">\n                kbd\n         \n        <pending_xref refdoc=\"index\" refdomain=\"math\" refexplicit=\"0\" reftarget=\"e\" reftype=\"numref\" refwarn=\"0\">\n            <literal classes=\"xref math math-numref\">\n                e\n         \n        <pending_xref js:module=\"True\" js:object=\"True\" refdoc=\"index\" refdomain=\"js\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref js js-func\">\n                f()\n         \n        <pending_xref js:module=\"True\" js:object=\"True\" refdoc=\"index\" refdomain=\"js\" refexplicit=\"0\" reftarget=\"m\" reftype=\"mod\" refwarn=\"0\">\n            <literal classes=\"xref js js-mod\">\n                m\n         \n        <pending_xref refdoc=\"index\" refdomain=\"c\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref c c-func\">\n                f()\n         \n        <pending_xref refdoc=\"index\" refdomain=\"cpp\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref cpp cpp-func\">\n                f()\n",
+      "rst": ":rst:dir:`code-block` :rst:role:`kbd` :math:numref:`e` :js:func:`f` :js:mod:`m` :c:func:`f` :cpp:func:`f`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.unknown_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :std:kbd:`x`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"std:kbd\".\n    <paragraph>\n        <problematic ids=\"id4\" refid=\"id3\">\n            :py:kbd:`x`\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:kbd\".\n    <paragraph>\n        <problematic ids=\"id6\" refid=\"id5\">\n            :bogus:`x`\n    <system_message backrefs=\"id6\" ids=\"id5\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n    <paragraph>\n        <problematic ids=\"id8\" refid=\"id7\">\n            :foo:bar:`x`\n    <system_message backrefs=\"id8\" ids=\"id7\" level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"foo:bar\".\n",
+      "rst": ":std:kbd:`x`\n\n:py:kbd:`x`\n\n:bogus:`x`\n\n:foo:bar:`x`\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.role_directive_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"role\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. role:: r(ref)\n               :class: special\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. role:: x(bogus)\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :r:`lbl`\n         \n        <problematic ids=\"id4\" refid=\"id3\">\n            :x:`w`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"r\".\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"x\".\n",
+      "rst": ".. role:: r(ref)\n   :class: special\n\n.. role:: x(bogus)\n\n:r:`lbl` :x:`w`\n"
+    },
+    {
+      "conf": {
+        "default_role": "any"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_any",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <pending_xref refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"x\" reftype=\"any\" refwarn=\"1\">\n            <literal classes=\"xref any\">\n                x\n         and \n        <pending_xref refdoc=\"index\" refdomain=\"\" refexplicit=\"1\" reftarget=\"b\" reftype=\"any\" refwarn=\"1\">\n            <literal classes=\"xref any\">\n                a\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "obj"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_obj_adapter",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"x\" reftype=\"obj\" refwarn=\"0\">\n            <literal classes=\"xref py py-obj\">\n                x\n         and \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"1\" reftarget=\"b\" reftype=\"obj\" refwarn=\"0\">\n            <literal classes=\"xref py py-obj\">\n                a\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "kbd"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_kbd",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            x\n         and \n        <literal classes=\"kbd\">\n            a\n         \n        <literal classes=\"kbd\">\n            <b>\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `Ctrl+x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "guilabel"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_guilabel",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <inline classes=\"guilabel\" rawtext=\"`x`\">\n            x\n         and \n        <inline classes=\"guilabel\" rawtext=\"`a <b>`\">\n            a <b>\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "math"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_math",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <math>\n            x\n         and \n        <math>\n            a <b>\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "code"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_code",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <literal classes=\"code\" language=\"\">\n            x\n         and \n        <literal classes=\"code\" language=\"\">\n            a <b>\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "index"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_index",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        x\n         and \n        <index entries=\"('single',\\ 'b',\\ 'index-1',\\ '',\\ None)\">\n        <target ids=\"index-1\">\n        a\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "pep"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_pep_error",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`\n         and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `a <b>`\n         and \n        <literal>\n            y\n        .\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            invalid PEP number x\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            invalid PEP number b\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "eq"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_eq",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <pending_xref refdoc=\"index\" refdomain=\"math\" refexplicit=\"0\" reftarget=\"x\" reftype=\"eq\" refwarn=\"1\">\n            <literal classes=\"xref eq\">\n                x\n         and \n        <pending_xref refdoc=\"index\" refdomain=\"math\" refexplicit=\"1\" reftarget=\"b\" reftype=\"eq\" refwarn=\"1\">\n            <literal classes=\"xref eq\">\n                a\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "conf": {
+        "default_role": "nonexistent"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_nonexistent",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <title_reference>\n            x\n         and \n        <title_reference>\n            a <b>\n         and \n        <literal>\n            y\n        .\n",
+      "rst": "Text `x` and `a <b>` and `y`:literal:.\n"
+    },
+    {
+      "family": "sx_config",
+      "name": "sx_config.default_domain_c_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"c\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref c c-func\">\n                f()\n         \n        <pending_xref refdoc=\"index\" refdomain=\"c\" refexplicit=\"0\" reftarget=\"T\" reftype=\"type\" refwarn=\"0\">\n            <literal classes=\"xref c c-type\">\n                T\n         \n        <pending_xref refdoc=\"index\" refdomain=\"c\" refexplicit=\"0\" reftarget=\"M\" reftype=\"macro\" refwarn=\"0\">\n            <literal classes=\"xref c c-macro\">\n                M\n",
+      "rst": ".. default-domain:: c\n\n:func:`f` :type:`T` :macro:`M`\n"
+    },
+    {
+      "family": "sx_config",
+      "name": "sx_config.unprefixed_py_directives",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n    <index entries=\"('single',\\ 'd\\ (in\\ module\\ m)',\\ 'm.d',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-m\">\n    <desc classes=\"py data\" desctype=\"data\" domain=\"py\" ids=\"module-m\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"data\">\n        <desc_signature _toc_name=\"d\" _toc_parts=\"('m', 'd')\" class=\"\" classes=\"sig sig-object\" fullname=\"d\" ids=\"m.d\" module=\"m\">\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                m.\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                d\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ E',\\ 'envvar-E',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-E\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                E\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ F',\\ 'envvar-F',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-F\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                F\n        <desc_content>\n    <index entries=\"('single',\\ 'K\\ (class\\ in\\ m)',\\ 'm.K',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"K\" _toc_parts=\"('m', 'K')\" class=\"\" classes=\"sig sig-object\" fullname=\"K\" ids=\"m.K\" module=\"m\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                m.\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                K\n        <desc_content>\n    <index entries=\"('single',\\ 'f()\\ (in\\ module\\ m)',\\ 'm.f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('m', 'f')\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"m.f\" module=\"m\">\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                m.\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        x\n        <desc_content>\n",
+      "rst": ".. module:: m\n\n.. currentmodule:: m\n\n.. data:: d\n\n.. std:envvar:: E\n\n.. py:envvar:: F\n\n.. CLASS:: K\n\n.. function:: f(x)\n"
+    },
+    {
+      "conf": {
+        "highlight_language": "python3"
+      },
+      "family": "sx_config",
+      "name": "sx_config.highlight_language_read_time",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" xml:space=\"preserve\">\n        y = 2\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" xml:space=\"preserve\">\n        z = 3\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        x = 1\n",
+      "rst": ".. code-block::\n\n   y = 2\n\n.. code::\n\n   z = 3\n\nPara::\n\n    x = 1\n"
+    },
+    {
+      "family": "sx_config",
+      "name": "sx_config.highlight_directive_state",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"2\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        int c;\n    <highlightlang force=\"1\" lang=\"none\" linenothreshold=\"9223372036854775807\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"none\" xml:space=\"preserve\">\n        plain\n",
+      "rst": ".. highlight:: c\n   :linenothreshold: 2\n\n.. code-block::\n\n   int c;\n\n.. highlight:: none\n   :force:\n\n.. code-block::\n\n   plain\n"
+    },
+    {
+      "family": "sx_config",
+      "name": "sx_config.default_role_directive",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <title_reference>\n            x\n         here.\n    <paragraph>\n        B \n        <math>\n            a^2\n         here.\n    <paragraph>\n        C \n        <literal classes=\"kbd\">\n            Ctrl\n        +\n        <literal classes=\"kbd\">\n            X\n         here.\n    <paragraph>\n        D \n        <title_reference>\n            z\n         here.\n    <system_message level=\"3\" line=\"15\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. default-role:: bogus\n    <paragraph>\n        E \n        <title_reference>\n            w\n         here.\n    <paragraph>\n        F \n        <literal classes=\"code\" language=\"\">\n            q\n         here.\n",
+      "rst": "A `x` here.\n\n.. default-role:: math\n\nB `a^2` here.\n\n.. default-role:: kbd\n\nC `Ctrl+X` here.\n\n.. default-role::\n\nD `z` here.\n\n.. default-role:: bogus\n\nE `w` here.\n\n.. default-role:: code\n\nF `q` here.\n"
+    },
+    {
+      "conf": {
+        "default_role": "any"
+      },
+      "family": "sx_config",
+      "name": "sx_config.default_role_directive_with_conf",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <pending_xref refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"x\" reftype=\"any\" refwarn=\"1\">\n            <literal classes=\"xref any\">\n                x\n         here.\n    <paragraph>\n        D \n        <title_reference>\n            z\n         here.\n",
+      "rst": "A `x` here.\n\n.. default-role::\n\nD `z` here.\n"
+    },
+    {
+      "conf": {
+        "primary_domain": null
+      },
+      "family": "sx_config",
+      "name": "sx_config.primary_domain_none",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"function\".\n        <literal_block xml:space=\"preserve\">\n            .. function:: f(x)\n    <paragraph classes=\"c\">\n        <problematic ids=\"id2\" refid=\"id1\">\n            :func:`f`\n         \n        <problematic ids=\"id4\" refid=\"id3\">\n            :class:`C`\n         \n        <problematic ids=\"id6\" refid=\"id5\">\n            :data:`d`\n         \n        <problematic ids=\"id8\" refid=\"id7\">\n            :mod:`m`\n         \n        <problematic ids=\"id10\" refid=\"id9\">\n            :exc:`E`\n         \n        <problematic ids=\"id12\" refid=\"id11\">\n            :type:`T`\n         \n        <problematic ids=\"id14\" refid=\"id13\">\n            :obj:`o`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"func\".\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"class\".\n    <system_message backrefs=\"id6\" ids=\"id5\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"data\".\n    <system_message backrefs=\"id8\" ids=\"id7\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"mod\".\n    <system_message backrefs=\"id10\" ids=\"id9\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"exc\".\n    <system_message backrefs=\"id12\" ids=\"id11\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"type\".\n    <system_message backrefs=\"id14\" ids=\"id13\" level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"obj\".\n",
+      "rst": ".. function:: f(x)\n\n.. class:: C\n\n:func:`f` :class:`C` :data:`d` :mod:`m` :exc:`E` :type:`T` :obj:`o`\n"
+    },
+    {
+      "family": "sx_config",
+      "name": "sx_config.default_domain_nonexistent",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :func:`f`\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"lbl\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                lbl\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"func\".\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"function\".\n        <literal_block xml:space=\"preserve\">\n            .. function:: g()\n",
+      "rst": ".. default-domain:: nonexistent\n\n:func:`f` :ref:`lbl`\n\n.. function:: g()\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.generic_sphinx_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <abbreviation explanation=\"explanation \"x\"\">\n            \"A\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`\"G\" --`\">\n            \"G\" --\n         \n        <inline classes=\"menuselection\" rawtext=\":menuselection:`\"A\" --> \"B\"`\">\n            \"A\" ‣ \"B\"\n         \n        <emphasis classes=\"dfn\">\n            \"d\"\n         \n        <literal classes=\"kbd\">\n            \"k\"\n         \n        <literal classes=\"file\" role=\"file\">\n            \"f\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`a\\\\\"b`\">\n            a\\\"b\n",
+      "rst": ":abbr:`\"A\" (explanation \"x\")` :guilabel:`\"G\" --` :menuselection:`\"A\" --> \"B\"` :dfn:`\"d\"` :kbd:`\"k\"` :file:`\"f\"` :guilabel:`a\\\\\"b`\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "*unclosed prolog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_message_source",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": "Title\n=====\n\nBody.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: python(code)\n   :language: python\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_role",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            <literal classes=\"code highlight python\" language=\"python\">\n                print(1)\n",
+      "rst": "Title\n=====\n\n:python:`print(1)`\n"
+    },
+    {
+      "conf": {
+        "rst_epilog": "*unclosed epilog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_epilog_joins_last_section",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <paragraph>\n                Last.\n            <paragraph>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                unclosed epilog emphasis\n            <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_epilogue>\" type=\"WARNING\">\n                <paragraph>\n                    Inline emphasis start-string without end-string.\n",
+      "rst": "Title\n=====\n\nBody.\n\nSub\n---\n\nLast.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "*unclosed prolog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_after_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <section ids=\"second\" names=\"second\">\n        <title>\n            Second\n        <paragraph>\n            text\n",
+      "rst": ":author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para one   \nline two\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para one   \n        line two\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "::\n\n   code   \n   more\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_literal",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        code   \n        more\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\tTabbed note.\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_indented_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <system_message level=\"2\" line=\"2\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        \tTabbed note.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "one\ftwo\u000bthree\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_form_feed_vertical_tab",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        one\n        two\n        three\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "a\tb\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_inside_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        a\tb\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para\n\tindented\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para\n        \tindented\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\n\tBody.\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_directive_content",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <paragraph>\n        \tBody.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "::\n\n   a\tb\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_in_literal",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        a\tb\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para one   \nline two\n   \n.. |a| replace:: A   \n\n::\n\n   code   \n   more\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_whitespace_mix",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para one   \n        line two\n    <substitution_definition names=\"a\">\n        A\n    <literal_block xml:space=\"preserve\">\n        code   \n        more\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text \n            A\n            .\n",
+      "rst": "T\n=\n\nText |a|.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "term   \n   definition   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_definition_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term   \n            <definition>\n                <paragraph>\n                    definition\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "| line one   \n| line two\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_line_block",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <line_block>\n        <line>\n            line one   \n        <line>\n            line two\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: py(code)   \n   :language: python   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_role_option",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Use \n            <literal classes=\"code highlight py python\\ \\ \\ \" language=\"python   \">\n                x\n            .\n",
+      "rst": "T\n=\n\nUse :py:`x`.\n"
+    },
+    {
+      "conf": {
+        "rst_epilog": "Last para   \nend   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_epilog_trailing_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n        <paragraph>\n            Last para   \n            end\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.download_unreadable_and_url",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"missing.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                missing.txt\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refuri=\"https://example.com/x.zip\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"1\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                the file\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n",
+      "rst": ":download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`f  .txt`\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_basic",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"The reStructuredText plaintext markup language\" name=\"description\">\n    <meta content=\"plaintext, markup language\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": "Title\n=====\n\n.. meta::\n   :description: The reStructuredText plaintext markup language\n   :keywords: plaintext, markup language\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_attrs",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"An amusing story\" lang=\"en\" name=\"description\">\n    <meta content=\"Une histoire amusante\" lang=\"fr\" name=\"description\">\n    <meta content=\"text/html; charset=ISO-8859-1\" http-equiv=\"Content-Type\">\n    <meta content=\"a, b\" name=\"keywords\" scheme=\"X\">\n    <meta content=\"OG <&> \"q\"\" property=\"og:title\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": "Title\n=====\n\nBody.\n\n.. meta::\n   :description lang=en: An amusing story\n   :description lang=fr: Une histoire amusante\n   :http-equiv=Content-Type: text/html; charset=ISO-8859-1\n   :name=keywords scheme=X: a, b\n   :property=og:title: OG <&> \"q\"\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_before_title",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"first\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. meta::\n   :keywords: first\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_in_section_nested",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"nested\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <note>\n",
+      "rst": "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"fine\" name=\"ok\">\n    <system_message level=\"3\" line=\"15\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               :ok: fine\n               trailing paragraph\n    <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               not a field\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Content block expected for the \"meta\" directive; none found.\n            <literal_block xml:space=\"preserve\">\n                .. meta::\n",
+      "rst": "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.title_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"second\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"title\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. title::\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            b\n",
+      "rst": ".. title::\n\n.. title:: one\n   :x: y\n\n.. title:: first\n.. title:: second\n\nT\n=\n\nb\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_footer",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <decoration>\n        <header>\n            <paragraph>\n                Top \n                <emphasis>\n                    header\n                 text\n            <paragraph>\n                Second header para\n        <footer>\n            <paragraph>\n                Bottom footer \n                today-ish\n    <substitution_definition names=\"date\">\n        today-ish\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_footer_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"header\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. header::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"footer\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. footer::\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header::\n\n.. footer::\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_in_section",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <decoration>\n        <footer>\n            <paragraph>\n                Deep footer\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n",
+      "rst": "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_only_metas",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n",
+      "rst": ".. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_bad_tokens",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
+      "rst": ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_line_after_blank_lines",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.title_no_section",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"Only Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Just a paragraph.\n",
+      "rst": ".. title:: Only Title\n\nJust a paragraph.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.test_directive",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        After.\n",
+      "rst": ".. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n\nAfter.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_with_targets",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <decoration>\n        <header>\n            <paragraph>\n                See \n                <reference name=\"x\" refuri=\"https://x.example/\">\n                    x\n                <target ids=\"x\" names=\"x\" refuri=\"https://x.example/\">\n                 and \n                <reference name=\"y\" refuri=\"https://y.example/\">\n                    y\n                .\n    <target ids=\"y\" names=\"y\" refuri=\"https://y.example/\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header:: See `x <https://x.example/>`_ and y_.\n\n.. _y: https://y.example/\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_dash_and_ellipsis_after_end_string",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Types of \n        <emphasis>\n            b\n        —but, \n        <strong>\n            b\n        –x, \n        <literal>\n            b\n        … and \n        <emphasis>\n            b\n        ―y.\n",
+      "rst": "Types of *b*—but, **b**–x, ``b``… and *b*―y.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_dash_and_ellipsis_before_start_string",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        x —\n        <emphasis>\n            b\n         y, x—\n        <emphasis>\n            b\n        —y and x…\n        <literal>\n            b\n        …y.\n",
+      "rst": "x —*b* y, x—*b*—y and x…``b``…y.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_before_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. meta::\n   :keywords: k\n\n:author: Me\n:date: 2020\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_before_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <decoration>\n        <header>\n            <paragraph>\n                H\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header:: H\n\n:author: Me\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.docinfo_then_meta",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_in_list_after_meta",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"AAAAFIRST\" name=\"a\">\n    <meta content=\"BBBBSECOND\" name=\"b\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": ".. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_basic",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"section-a\">\n                                    Section A\n                            <bullet_list>\n                                <list_item>\n                                    <paragraph>\n                                        <reference ids=\"id3\" refid=\"sub-a1\">\n                                            Sub A1\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id2\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"id3\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id4\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_local",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"section-a\">\n                            Section A\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"sub-a1\">\n                                    Sub A1\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"section-b\">\n                            Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id1\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"id2\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id3\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :local:\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_depth1",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title>\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title>\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_title_arg",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"table-of-contents\" names=\"table\\ of\\ contents\">\n            <title>\n                Table of \n                <emphasis>\n                    Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"section-a\">\n                                    Section A\n                            <bullet_list>\n                                <list_item>\n                                    <paragraph>\n                                        <reference ids=\"id3\" refid=\"sub-a1\">\n                                            Sub A1\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id2\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"id3\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id4\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents:: Table of *Contents*\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_backlinks_top",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"contents\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"section-a\">\n                                    Section A\n                            <bullet_list>\n                                <list_item>\n                                    <paragraph>\n                                        <reference ids=\"id3\" refid=\"sub-a1\">\n                                            Sub A1\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"contents\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"contents\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"contents\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :backlinks: top\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_backlinks_none",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"section-a\">\n                                    Section A\n                            <bullet_list>\n                                <list_item>\n                                    <paragraph>\n                                        <reference ids=\"id3\" refid=\"sub-a1\">\n                                            Sub A1\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title>\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title>\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :backlinks: none\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_class",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents this-page fancy local\" ids=\"on-this-page\" names=\"on\\ this\\ page\">\n            <title>\n                On this page\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"section-a\">\n                            Section A\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"sub-a1\">\n                                    Sub A1\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"section-b\">\n                            Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id1\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"id2\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id3\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. contents:: On this page\n   :local:\n   :class: this-page Fancy\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_before_title",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <bullet_list>\n            <list_item>\n                <paragraph>\n                    <reference ids=\"id1\" refid=\"title\">\n                        Title\n                <bullet_list>\n                    <list_item>\n                        <paragraph>\n                            <reference ids=\"id2\" refid=\"section-a\">\n                                Section A\n                        <bullet_list>\n                            <list_item>\n                                <paragraph>\n                                    <reference ids=\"id3\" refid=\"sub-a1\">\n                                        Sub A1\n                    <list_item>\n                        <paragraph>\n                            <reference ids=\"id4\" refid=\"section-b\">\n                                Section B\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <paragraph>\n            Intro.\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title refid=\"id2\">\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title refid=\"id3\">\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title refid=\"id4\">\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": ".. contents::\n\nTitle\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_local_toplevel",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n        <bullet_list>\n            <list_item>\n                <paragraph>\n                    <reference ids=\"id1\" refid=\"one\">\n                        One\n            <list_item>\n                <paragraph>\n                    <reference ids=\"id2\" refid=\"two\">\n                        Two\n    <section ids=\"one\" names=\"one\">\n        <title refid=\"id1\">\n            One\n        <section ids=\"a\" names=\"1a\">\n            <title>\n                1a\n    <section ids=\"two\" names=\"two\">\n        <title refid=\"id2\">\n            Two\n",
+      "rst": ".. contents::\n   :local:\n   :depth: 1\n\nOne\n===\n\n1a\n--\n\nTwo\n===\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_no_sections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para before.\n    <paragraph>\n        Para after.\n",
+      "rst": "Para before.\n\n.. contents::\n\nPara after.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_local_no_subsections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Only text.\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :local:\n\nOnly text.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_in_sidebar",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <sidebar>\n            <title>\n                Side\n            <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n                <bullet_list>\n                    <list_item>\n                        <paragraph>\n                            <reference ids=\"id1\" refid=\"sec\">\n                                Sec\n        <section ids=\"sec\" names=\"sec\">\n            <title refid=\"id1\">\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. sidebar:: Side\n\n   .. contents::\n      :local:\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_inside_only",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <only expr=\"html\">\n            <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n                <bullet_list>\n                    <list_item>\n                        <paragraph>\n                            <reference ids=\"id1\" refid=\"sec\">\n                                Sec\n        <only expr=\"latex\">\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    body\n        <section ids=\"sec\" names=\"sec\">\n            <title refid=\"id1\">\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. only:: html\n\n   .. contents::\n      :local:\n\n.. only:: latex\n\n   .. topic:: T\n\n      body\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_only_sections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"after\">\n                                    After\n        <only expr=\"html\">\n            <section ids=\"inside-only\" names=\"inside\\ only\">\n                <title>\n                    Inside Only\n                <paragraph>\n                    x\n        <section ids=\"after\" names=\"after\">\n            <title refid=\"id2\">\n                After\n",
+      "rst": "Title\n=====\n\n.. contents::\n\n.. only:: html\n\n   Inside Only\n   -----------\n\n   x\n\nAfter\n-----\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_in_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <note>\n            <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"contents\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. contents::\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. note::\n\n   .. contents::\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_bad_options",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"contents\" directive:\n                invalid option value: (option: \"depth\"; value: '-1')\n                negative value; must be positive or zero.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n                   :depth: -1\n        <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"contents\" directive:\n                invalid option value: (option: \"backlinks\"; value: 'bogus')\n                \"bogus\" unknown; choose from \"top\", \"entry\", or \"none\".\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n                   :backlinks: bogus\n        <system_message level=\"3\" line=\"10\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"contents\" directive:\n                invalid option value: (option: \"depth\"; value: 'two')\n                invalid literal for int() with base 10: 'two'.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n                   :depth: two\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. contents::\n   :depth: -1\n\n.. contents::\n   :backlinks: bogus\n\n.. contents::\n   :depth: two\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_name_clash",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"contents\" names=\"contents\">\n        <title refid=\"id5\">\n            Contents\n        <topic classes=\"contents\" ids=\"id1\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"contents\">\n                            Contents\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"sec\">\n                                    Sec\n        <topic classes=\"contents\" ids=\"id2\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id5\" refid=\"contents\">\n                            Contents\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id6\" refid=\"sec\">\n                                    Sec\n        <section ids=\"sec\" names=\"sec\">\n            <title refid=\"id6\">\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Contents\n========\n\n.. contents::\n\n.. contents::\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_then_section_named_contents",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id2\">\n            Title\n        <topic classes=\"contents\" dupnames=\"contents\" ids=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id2\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id3\" refid=\"id1\">\n                                    Contents\n        <section dupnames=\"contents\" ids=\"id1\">\n            <title refid=\"id3\">\n                Contents\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. contents::\n\nContents\n--------\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_label_clash_with_sections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id2\">\n            Title\n        <topic classes=\"contents\" dupnames=\"contents\" ids=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id2\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id3\" refid=\"sec\">\n                                    Sec\n        <target refid=\"id1\">\n        <section ids=\"sec id1\" names=\"sec contents\">\n            <title refid=\"id3\">\n                Sec\n            <paragraph>\n                see \n                <reference name=\"contents\" refid=\"id1\">\n                    contents\n                 and \n                <reference name=\"Contents\" refid=\"id1\">\n                    Contents\n                .\n",
+      "rst": "Title\n=====\n\n.. contents::\n\n.. _contents:\n\nSec\n---\n\nsee contents_ and `Contents`_.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_removed_topic_label",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <target refid=\"id1\">\n    <paragraph ids=\"id1\" names=\"contents\">\n        Para two, see \n        <reference name=\"contents\" refid=\"id1\">\n            contents\n        .\n",
+      "rst": "Para.\n\n.. contents::\n\n.. _contents:\n\nPara two, see contents_.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_and_explicit_target_ids",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id2\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id2\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id3\" refid=\"section-a\">\n                                    Section A\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    Section B\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id5\" refid=\"id1\">\n                                    Section B\n        <target refid=\"lbl\">\n        <section ids=\"section-a lbl\" names=\"section\\ a lbl\">\n            <title refid=\"id3\">\n                Section A\n        <section dupnames=\"section\\ b\" ids=\"section-b\">\n            <title refid=\"id4\">\n                Section B\n        <section dupnames=\"section\\ b\" ids=\"id1\">\n            <title refid=\"id5\">\n                Section B\n",
+      "rst": "Title\n=====\n\n.. contents::\n\n.. _lbl:\n\nSection A\n---------\n\nSection B\n---------\n\nSection B\n---------\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_xref_titles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"see-lab\">\n                                    See \n                                    <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"lab\" reftype=\"ref\" refwarn=\"1\">\n                                        <inline classes=\"xref std std-ref\">\n                                            lab\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id3\" refid=\"the-len-function\">\n                                    The \n                                    <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"len\" reftype=\"func\" refwarn=\"0\">\n                                        <literal classes=\"xref py py-func\">\n                                            len()\n                                     function\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"an-abbr-lifo-title\">\n                                    An \n                                    <literal>\n                                        :abbr:\n                                     \n                                    <abbreviation explanation=\"last-in, first-out\">\n                                        LIFO\n                                     title\n        <target refid=\"lab\">\n        <section ids=\"see-lab lab\" names=\"see\\ lab lab\">\n            <title refid=\"id2\">\n                See \n                <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"lab\" reftype=\"ref\" refwarn=\"1\">\n                    <inline classes=\"xref std std-ref\">\n                        lab\n        <section ids=\"the-len-function\" names=\"the\\ len()\\ function\">\n            <title refid=\"id3\">\n                The \n                <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"len\" reftype=\"func\" refwarn=\"0\">\n                    <literal classes=\"xref py py-func\">\n                        len()\n                 function\n        <section ids=\"an-abbr-lifo-title\" names=\"an\\ :abbr:\\ lifo\\ title\">\n            <title refid=\"id4\">\n                An \n                <literal>\n                    :abbr:\n                 \n                <abbreviation explanation=\"last-in, first-out\">\n                    LIFO\n                 title\n",
+      "rst": "Title\n=====\n\n.. contents::\n\n.. _lab:\n\nSee :ref:`lab`\n--------------\n\nThe :py:func:`len` function\n---------------------------\n\nAn ``:abbr:`` :abbr:`LIFO (last-in, first-out)` title\n-----------------------------------------------------\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_index_role_title",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id1\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"the-spam-section\">\n                                    The \n                                    <index entries=\"('single',\\ 'spam',\\ 'index-0',\\ '',\\ None)\">\n                                    spam\n                                     section\n        <section ids=\"the-spam-section\" names=\"the\\ spam\\ section\">\n            <title refid=\"id2\">\n                The \n                <index entries=\"('single',\\ 'spam',\\ 'index-0',\\ '',\\ None)\">\n                <target ids=\"index-0\">\n                spam\n                 section\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. contents::\n\nThe :index:`spam` section\n-------------------------\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.contents_title_markup",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title refid=\"id3\">\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"title\">\n                            Title\n                    <bullet_list>\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"a-link-title\">\n                                    A \n                                    link\n                                     title\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id5\" refid=\"footnote-and-emph-and-lit\">\n                                    Footnote \n                                     and \n                                    <emphasis>\n                                        emph\n                                     and \n                                    <literal>\n                                        lit\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id6\" refid=\"internal-ref\">\n                                    Internal\n                                     ref\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id7\" refid=\"internal\">\n                                    Internal\n        <section ids=\"a-link-title\" names=\"a\\ link\\ title\">\n            <title>\n                A \n                <reference name=\"link\" refuri=\"https://example.org/\">\n                    link\n                <target ids=\"link\" names=\"link\" refuri=\"https://example.org/\">\n                 title\n        <section ids=\"footnote-and-emph-and-lit\" names=\"footnote\\ and\\ emph\\ and\\ lit\">\n            <title refid=\"id5\">\n                Footnote \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"f\">\n                    1\n                 and \n                <emphasis>\n                    emph\n                 and \n                <literal>\n                    lit\n        <section ids=\"internal-ref\" names=\"internal\\ ref\">\n            <title>\n                <reference name=\"Internal\" refid=\"internal\">\n                    Internal\n                 ref\n            <target refid=\"internal\">\n        <section dupnames=\"internal\" ids=\"internal id2\" names=\"internal\">\n            <title refid=\"id7\">\n                Internal\n            <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"f\" names=\"f\">\n                <label>\n                    1\n                <paragraph>\n                    Note.\n",
+      "rst": "Title\n=====\n\n.. contents::\n\nA `link <https://example.org/>`_ title\n--------------------------------------\n\nFootnote [#f]_ and *emph* and ``lit``\n-------------------------------------\n\n`Internal`_ ref\n---------------\n\n.. _Internal:\n\nInternal\n--------\n\n.. [#f] Note.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_basic",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title auto=\"1\">\n                    <generated classes=\"sectnum\">\n                        1.1.1   \n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_options",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                A.3)   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    A.3.1)   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    A.3.2)   \n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n   :depth: 2\n   :prefix: A.\n   :suffix: )\n   :start: 3\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title>\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title>\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. section-numbering::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_depth0",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title>\n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title>\n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title>\n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n   :depth: 0\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_after_sections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <paragraph>\n            Intro.\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title auto=\"1\">\n                    <generated classes=\"sectnum\">\n                        1.1.1   \n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n\n.. sectnum::\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_two",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                X1   \n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    X1.1   \n                <generated classes=\"sectnum\">\n                    1.1   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title auto=\"1\">\n                    <generated classes=\"sectnum\">\n                        X1.1.1   \n                    <generated classes=\"sectnum\">\n                        1.1.1   \n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\">\n                <generated classes=\"sectnum\">\n                    X1.2   \n                <generated classes=\"sectnum\">\n                    1.2   \n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n\n.. sectnum::\n   :prefix: X\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_with_contents",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\" refid=\"id1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list classes=\"auto-toc\">\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"title\">\n                            <generated classes=\"sectnum\">\n                                1   \n                            Title\n                    <bullet_list classes=\"auto-toc\">\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id2\" refid=\"section-a\">\n                                    <generated classes=\"sectnum\">\n                                        1.1   \n                                    Section A\n                            <bullet_list classes=\"auto-toc\">\n                                <list_item>\n                                    <paragraph>\n                                        <reference ids=\"id3\" refid=\"sub-a1\">\n                                            <generated classes=\"sectnum\">\n                                                1.1.1   \n                                            Sub A1\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id4\" refid=\"section-b\">\n                                    <generated classes=\"sectnum\">\n                                        1.2   \n                                    Section B\n        <section ids=\"section-a\" names=\"section\\ a\">\n            <title auto=\"1\" refid=\"id2\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Section A\n            <paragraph>\n                Text A.\n            <section ids=\"sub-a1\" names=\"sub\\ a1\">\n                <title auto=\"1\" refid=\"id3\">\n                    <generated classes=\"sectnum\">\n                        1.1.1   \n                    Sub A1\n                <paragraph>\n                    Text A1.\n        <section ids=\"section-b\" names=\"section\\ b\">\n            <title auto=\"1\" refid=\"id4\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                Section B\n            <paragraph>\n                Text B.\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_contents_depth",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n            <bullet_list classes=\"auto-toc\">\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id1\" refid=\"a\">\n                            <generated classes=\"sectnum\">\n                                1.1   \n                            A\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id2\" refid=\"b\">\n                            <generated classes=\"sectnum\">\n                                1.2   \n                            B\n        <section ids=\"a\" names=\"a\">\n            <title auto=\"1\" refid=\"id1\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                A\n            <section ids=\"a1\" names=\"a1\">\n                <title>\n                    A1\n        <section ids=\"b\" names=\"b\">\n            <title auto=\"1\" refid=\"id2\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                B\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n   :depth: 2\n\n.. contents::\n   :local:\n   :depth: 1\n\nA\n-\n\nA1\n~~\n\nB\n-\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.sectnum_bad_options",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"sectnum\" directive:\n                invalid option value: (option: \"depth\"; value: 'x')\n                invalid literal for int() with base 10: 'x'.\n            <literal_block xml:space=\"preserve\">\n                .. sectnum::\n                   :depth: x\n        <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"sectnum\" directive:\n                invalid option value: (option: \"prefix\"; value: None)\n                argument required but none supplied.\n            <literal_block xml:space=\"preserve\">\n                .. sectnum::\n                   :prefix:\n        <system_message level=\"3\" line=\"10\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"sectnum\" directive:\n                no content permitted.\n            <literal_block xml:space=\"preserve\">\n                .. sectnum:: arg\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n            <paragraph>\n                x\n",
+      "rst": "Title\n=====\n\n.. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n\nSec\n---\n\nx\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.target_notes_basic",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            See \n            <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                Python\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"id2\">\n                1\n             and \n            <reference name=\"Docutils\" refuri=\"https://docutils.sourceforge.io/\">\n                Docutils\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id6\" refid=\"id5\">\n                2\n             and \n            <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                Python\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id4\" refid=\"id2\">\n                1\n             again, and an \n            <reference anonymous=\"1\" name=\"anonymous\" refuri=\"https://anon.example/\">\n                anonymous\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id10\" refid=\"id9\">\n                4\n             link and\n            an \n            <reference name=\"embedded\" refuri=\"https://embedded.example/\">\n                embedded\n            <target ids=\"embedded\" names=\"embedded\" refuri=\"https://embedded.example/\">\n             one; \n            <reference name=\"unused\" refuri=\"https://unused.example/\">\n                unused\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id8\" refid=\"id7\">\n                3\n             is not referenced.\n        <target ids=\"python\" names=\"python\" refuri=\"https://www.python.org/\">\n        <target ids=\"docutils\" names=\"docutils\" refuri=\"https://docutils.sourceforge.io/\">\n        <target ids=\"unused\" names=\"unused\" refuri=\"https://unused.example/\">\n        <target anonymous=\"1\" ids=\"id1\" refuri=\"https://anon.example/\">\n        <target ids=\"alias\" names=\"alias\" refuri=\"https://www.python.org/\">\n        <section ids=\"notes\" names=\"notes\">\n            <title>\n                Notes\n            <footnote auto=\"1\" backrefs=\"id3 id4\" docname=\"index\" ids=\"id2\" names=\"TARGET_NOTE:\\ id2\">\n                <label>\n                    1\n                <paragraph>\n                    <reference refuri=\"https://www.python.org/\">\n                        https://www.python.org/\n            <footnote auto=\"1\" backrefs=\"id6\" docname=\"index\" ids=\"id5\" names=\"TARGET_NOTE:\\ id5\">\n                <label>\n                    2\n                <paragraph>\n                    <reference refuri=\"https://docutils.sourceforge.io/\">\n                        https://docutils.sourceforge.io/\n            <footnote auto=\"1\" backrefs=\"id8\" docname=\"index\" ids=\"id7\" names=\"TARGET_NOTE:\\ id7\">\n                <label>\n                    3\n                <paragraph>\n                    <reference refuri=\"https://unused.example/\">\n                        https://unused.example/\n            <footnote auto=\"1\" backrefs=\"id10\" docname=\"index\" ids=\"id9\" names=\"TARGET_NOTE:\\ id9\">\n                <label>\n                    4\n                <paragraph>\n                    <reference refuri=\"https://anon.example/\">\n                        https://anon.example/\n",
+      "rst": "Title\n=====\n\nSee Python_ and Docutils_ and Python_ again, and an anonymous__ link and\nan `embedded <https://embedded.example/>`_ one; unused_ is not referenced.\n\n.. _Python: https://www.python.org/\n.. _Docutils: https://docutils.sourceforge.io/\n.. _unused: https://unused.example/\n.. __: https://anon.example/\n.. _alias: Python_\n\nNotes\n-----\n\n.. target-notes::\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.target_notes_class",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            See \n            <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                Python\n            <inline classes=\"custom\">\n                 \n            <footnote_reference auto=\"1\" classes=\"custom\" docname=\"index\" ids=\"id2\" refid=\"id1\">\n                1\n             here.\n        <target ids=\"python\" names=\"python\" refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n            <label>\n                1\n            <paragraph>\n                <reference refuri=\"https://www.python.org/\">\n                    https://www.python.org/\n",
+      "rst": "Title\n=====\n\nSee Python_ here.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n   :class: custom\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.target_notes_dup_uri",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            See \n            <reference name=\"one\" refuri=\"https://same.example/\">\n                one\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id1\">\n                1\n             and \n            <reference name=\"two\" refuri=\"https://same.example/\">\n                two\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"id1\">\n                1\n             and \n            <reference name=\"three\" refuri=\"https://same.example/\">\n                three\n            .\n        <target ids=\"one\" names=\"one\" refuri=\"https://same.example/\">\n        <target ids=\"two\" names=\"two\" refuri=\"https://same.example/\">\n        <footnote auto=\"1\" backrefs=\"id2 id3\" docname=\"index\" ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n            <label>\n                1\n            <paragraph>\n                <reference refuri=\"https://same.example/\">\n                    https://same.example/\n",
+      "rst": "Title\n=====\n\nSee one_ and two_ and `three <https://same.example/>`__.\n\n.. _one: https://same.example/\n.. _two: https://same.example/\n\n.. target-notes::\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.target_notes_with_footnotes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Manual \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"a\">\n                1\n             and \n            <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                Python\n             \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"id2\">\n                2\n            .\n        <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"a\" names=\"a\">\n            <label>\n                1\n            <paragraph>\n                Auto footnote.\n        <target ids=\"python\" names=\"python\" refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" backrefs=\"id3\" docname=\"index\" ids=\"id2\" names=\"TARGET_NOTE:\\ id2\">\n            <label>\n                2\n            <paragraph>\n                <reference refuri=\"https://www.python.org/\">\n                    https://www.python.org/\n",
+      "rst": "Title\n=====\n\nManual [#a]_ and Python_.\n\n.. [#a] Auto footnote.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.target_notes_bad",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                no content permitted.\n            <literal_block xml:space=\"preserve\">\n                .. target-notes:: arg\n        <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                unknown option: \"name\".\n            <literal_block xml:space=\"preserve\">\n                .. target-notes::\n                   :name: x\n        <system_message level=\"3\" line=\"9\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                no content permitted.\n            <literal_block xml:space=\"preserve\">\n                .. target-notes::\n                \n                   content\n",
+      "rst": "Title\n=====\n\n.. target-notes:: arg\n\n.. target-notes::\n   :name: x\n\n.. target-notes::\n\n   content\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_title_together",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"HTML Page Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"d\" name=\"description\">\n    <decoration>\n        <header>\n            <paragraph>\n                H\n        <footer>\n            <paragraph>\n                F\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n            <bullet_list classes=\"auto-toc\">\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"sub\">\n                            <generated classes=\"sectnum\">\n                                1.1   \n                            Sub\n        <section ids=\"sub\" names=\"sub\">\n            <title auto=\"1\" refid=\"id3\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Sub\n            <paragraph>\n                See \n                <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                    Python\n                 \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id1\">\n                    1\n                .\n            <target ids=\"python\" names=\"python\" refuri=\"https://www.python.org/\">\n            <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n                <label>\n                    1\n                <paragraph>\n                    <reference refuri=\"https://www.python.org/\">\n                        https://www.python.org/\n",
+      "rst": ".. title:: HTML Page Title\n.. meta::\n   :description: d\n\n.. header:: H\n\nTitle\n=====\n\n.. contents::\n   :local:\n\n.. sectnum::\n\nSub\n---\n\nSee Python_.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n\n.. footer:: F\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_pending",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+      "rst": "Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_content",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"a b\">\n        Para one.\n    <paragraph classes=\"a b\">\n        Para two.\n",
+      "rst": ".. cssclass:: a B\n\n   Para one.\n\n   Para two.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"cssclass\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+      "rst": ".. cssclass:: !!!\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_last",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following \"cssclass\" directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+      "rst": "Para.\n\n.. cssclass:: x\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_added_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some text.\n",
+      "rst": ".. version-added:: 1.2\n\n   Some text.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_changed_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Inline \n            <emphasis>\n                text\n            .\n",
+      "rst": ".. version-changed:: 2.0 Inline *text*.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_deprecated_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0.\n",
+      "rst": ".. version-deprecated:: 3.0\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_removed_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    a list first\n",
+      "rst": ".. version-removed:: 4.0\n\n   * a list first\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_alias_no_argument",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"version-added\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+      "rst": ".. version-added::\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.authors_hidden",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n",
+      "rst": ".. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.authors_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectionauthor\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"codeauthor\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+      "rst": ".. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <tabular_col_spec spec=\"|l|L|\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n",
+      "rst": ".. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <tabular_col_spec spec=\"|l|\nL|\">\n",
+      "rst": ".. tabularcolumns:: |l|\n   L|   \n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+      "rst": ".. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        Centered \n        <emphasis>\n            text\n         here\n",
+      "rst": ".. centered:: Centered *text* here\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_problem",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `\n        bad\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline interpreted text or phrase reference start-string without end-string.\n    <paragraph>\n        After.\n",
+      "rst": ".. centered:: *unclosed and `bad\n\nAfter.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+      "rst": ".. centered::\n\n.. centered:: x\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        line one\n        line two\n",
+      "rst": ".. centered:: line one\n   line two\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    Alice\n            <list_item>\n                <paragraph>\n                    Bob \n                    <emphasis>\n                        the builder\n",
+      "rst": ".. acks::\n\n   * Alice\n   * Bob *the builder*\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_not_a_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+      "rst": "Title\n=====\n\n.. acks::\n\n   not a list\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_two_lists",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n",
+      "rst": ".. acks::\n\n   * a\n\n   - b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_target_kept",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <reference name=\"t\" refid=\"t\">\n            t\n        .\n",
+      "rst": ".. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_problem_in_item",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    <problematic ids=\"id2\" refid=\"id1\">\n                        *\n                    unclosed\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n",
+      "rst": ".. acks::\n\n   * *unclosed\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"try_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try_stmt\">\n                try_stmt\n              ::= \n            <pending_xref refdomain=\"std\" reftarget=\"try1_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try1_stmt\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"try2_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try2_stmt\n            \n        <production tokenname=\"try1_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try1_stmt\">\n                try1_stmt\n             ::= \n            \"try\" \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                          \n            (\"except\" [\n            <pending_xref refdomain=\"std\" reftarget=\"expression\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    expression\n             [\"as\" \n            <pending_xref refdomain=\"std\" reftarget=\"identifier\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    identifier\n            ]] \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            )+\n            \n",
+      "rst": ".. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: \"try\" \":\" `suite`\n            : (\"except\" [`expression` [\"as\" `identifier`]] \":\" `suite`)+\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_group",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"mygroup:b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"other:c\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    other:c\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"grp:d\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    d\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"e\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    e\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-b\">\n                b\n             ::= \n            \"x\"\n            \n",
+      "rst": ".. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: \"x\"\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_line_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b    c\n            \n        <production tokenname=\"d\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-d\">\n                d\n             ::= \n            e\n            \n",
+      "rst": ".. productionlist::\n   a: b \\\n      c\n   d: e\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_stops_at_a_line_without_colon",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+      "rst": ".. productionlist::\n   a: b\n   no colon here\n   c: d\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_duplicate_name",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                a\n             ::= \n            c\n            \n",
+      "rst": ".. productionlist::\n   a: b\n   a: c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_name_ids",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"Foo Bar\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-Foo-Bar\">\n                Foo Bar\n             ::= \n            x\n            \n        <production tokenname=\"été\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-ete\">\n                été\n                 ::= \n            y\n            \n        <production tokenname=\"!!!\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token\">\n                !!!\n                 ::= \n            z\n            \n        <production tokenname=\"???\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                ???\n                 ::= \n            w\n            \n",
+      "rst": ".. productionlist::\n   Foo Bar: x\n   été: y\n   !!!: z\n   ???: w\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_std_prefix",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+      "rst": ".. std:productionlist::\n   a: b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_on_the_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-b\">\n                b\n             ::= \n            c\n            \n",
+      "rst": ".. productionlist:: a: `b`\n   b: c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+      "rst": ".. productionlist::\n\n.. productionlist:: a: b\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_tokens",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"x\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-x\">\n                x\n             ::= \n            `a b` `-c` `a-b` \n            <pending_xref refdomain=\"std\" reftarget=\"_x\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    _x\n             \n            <pending_xref refdomain=\"std\" reftarget=\"1\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    1\n             `~y` \n            <pending_xref refdomain=\"std\" reftarget=\":z\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    z\n             `g:` `:` \n            <pending_xref refdomain=\"std\" reftarget=\"é\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    é\n            \n",
+      "rst": ".. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `é`\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_unnamed",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            a\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            b\n            \n",
+      "rst": ".. productionlist::\n   : a\n   : b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <note>\n        <productionlist>\n            <production tokenname=\"a\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-a\">\n                    a\n                 ::= \n                b\n                \n",
+      "rst": ".. note::\n\n   .. productionlist::\n      a: b\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.centered_hlist",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        \"Centered\" text\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        \"a\"\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        'b'\n",
+      "rst": ".. centered:: \"Centered\" text\n\n.. hlist::\n\n   * \"a\"\n   * 'b'\n"
     }
   ],
-  "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",
+  "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",
   "docutils_version": "0.22.4",
   "generator": "tools/gen_sphinx_fixture.py",
   "harness": "sphinx.util.docutils._parse_str_to_doctree with env.settings + registry transforms (probes-doc 'harness3'; byte-identical to a full dummy-builder build + env.get_doctree)",

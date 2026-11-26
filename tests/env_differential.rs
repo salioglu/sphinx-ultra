@@ -35,6 +35,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use sphinx_ultra::builder::BuilderKind;
+use sphinx_ultra::config::SourceSuffix;
 use sphinx_ultra::diagnostics::Diagnostic;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
@@ -67,11 +68,11 @@ pub struct Project {
     /// docname -> rst source. Nested docnames (e.g. "sub/b") map to
     /// "sub/b.rst" when materialized.
     pub files: BTreeMap<String, String>,
-    /// relative path -> literal text of a non-document member (the `.py` /
-    /// `.inc` / `.png` files the include and literalinclude projects read),
-    /// written verbatim beside the sources. Never `.rst`/`.md`/`.txt`: this
-    /// crate's discovery is wider than Sphinx's default `source_suffix`, so
-    /// a `.txt` member would become a document on our side only.
+    /// relative path -> literal text of a member written verbatim beside
+    /// the sources: the `.py` / `.inc` / `.png` files the include and
+    /// literalinclude projects read, and the `.txt` / `.md` files the
+    /// `source_suffix_*` projects ship, which are documents on both sides
+    /// exactly when their name ends with a configured `source_suffix`.
     #[serde(default)]
     pub data_files: BTreeMap<String, String>,
     pub expect: Expect,
@@ -320,13 +321,16 @@ fn canon_scope8(text: &str) -> String {
 /// [`normalize_source_paths`] over a build's records, rendered with
 /// Sphinx's default `show_warning_types = True`, which no oracle project
 /// overrides, one entry per line of the stream, as the oracle records it: a
-/// multi-line record (a reporter message holding its block) spans several.
+/// multi-line record (a reporter message holding its block) spans several,
+/// and a blank line is dropped, as `tools/gen_env_fixture.py` drops it
+/// (`if line.strip()`).
 fn normalize_warnings(warnings: &[Diagnostic], root: &str) -> Vec<String> {
     warnings
         .iter()
         .flat_map(|warning| {
             normalize_source_paths(&warning.render(true), root)
                 .split('\n')
+                .filter(|line| !line.trim().is_empty())
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
@@ -442,6 +446,18 @@ fn config_of(project: &Project) -> BuildConfig {
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
             assert_inert_conf_is_sound(&project.name, key, value);
+            continue;
+        }
+        // `source_suffix` is typed `Any`, so `-D` carries one suffix, the
+        // text as given, where the generator hands Sphinx the fixture's
+        // list or dict as the Python object it is (`confoverrides`): the
+        // typed field takes such a value through the normalization a
+        // `conf.py` value gets. A dict of several suffixes cannot come from
+        // the fixture, whose sorted keys lost the order Sphinx read
+        // (`SourceSuffix::from_fixture_conf`).
+        if key == "source_suffix" && (value.is_array() || value.is_object()) {
+            config.source_suffix = SourceSuffix::from_fixture_conf(value)
+                .unwrap_or_else(|e| panic!("project {}: source_suffix: {e}", project.name));
             continue;
         }
         // A dict-valued setting is applied key by key (`-D numfig_format.figure=...`),
@@ -639,34 +655,28 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
 /// implemented, which is what makes it sound to leave them off the
-/// [`config_of`] override pass.
-///
-/// `smartquotes`: no smart-quote transform exists.
+/// [`config_of`] override pass. None today: every key the fixture sets is
+/// applied as a `-D` override.
 ///
 /// A new fixture project introducing another such key must either have it
 /// added here (with the same kind of justification) or be expressible as a
 /// `-D` override.
-const KNOWN_INERT_CONF: &[&str] = &["smartquotes"];
+const KNOWN_INERT_CONF: &[&str] = &[];
 
 /// The side-condition that makes one [`KNOWN_INERT_CONF`] entry sound.
 ///
-/// Exhaustive on purpose. A future key added to [`KNOWN_INERT_CONF`] with
-/// no arm here fails the first project that sets it, with instructions —
-/// the mechanical forcing the table otherwise lacks, so "inert" cannot be
-/// claimed for a new key without either a side-condition or an explicit
-/// statement that every value is inert.
+/// Exhaustive on purpose. A key added to [`KNOWN_INERT_CONF`] with no
+/// side-condition here fails the first project that sets it, with
+/// instructions — the mechanical forcing the table otherwise lacks, so
+/// "inert" cannot be claimed for a new key without either a side-condition
+/// or an explicit statement that every value is inert.
 fn assert_inert_conf_is_sound(project: &str, key: &str, _value: &serde_json::Value) {
-    match key {
-        // Inert in EVERY sense: no smart-quote transform exists at all, so
-        // neither `True` nor `False` steers anything.
-        "smartquotes" => {}
-        other => panic!(
-            "project {project:?} sets {other:?}, which is listed in KNOWN_INERT_CONF \
-             but has no soundness arm in assert_inert_conf_is_sound. Add one: either \
-             an empty arm with a comment saying why EVERY value is inert, or an \
-             assertion narrowing it to the values that are."
-        ),
-    }
+    panic!(
+        "project {project:?} sets {key:?}, which is listed in KNOWN_INERT_CONF \
+         but has no soundness arm in assert_inert_conf_is_sound. Match on the key and \
+         add one: either an empty arm with a comment saying why EVERY value is inert, \
+         or an assertion narrowing it to the values that are."
+    )
 }
 
 fn report(divergences: &[String], keys: &str) {
@@ -833,6 +843,43 @@ fn scalar_override_spells_booleans_like_sphinx() {
     }
     assert!(config.numfig && config.keep_warnings && !config.nitpicky);
     assert!(config.apply_override("keep_warnings", "true").is_err());
+}
+
+/// A dict-valued `source_suffix` of several suffixes cannot come from the
+/// fixture: `tools/gen_env_fixture.py` writes it with sorted keys
+/// (`sort_keys=True`), which loses the order Sphinx read the dict in, and
+/// so its first suffix. `config_of` refuses it, naming the reason.
+#[test]
+#[should_panic(
+    expected = "project p: source_suffix: a dict of 2 suffixes cannot be read from an oracle \
+                fixture: its keys are sorted, which loses the order Sphinx read them in, and \
+                with it the first suffix"
+)]
+fn a_source_suffix_dict_of_several_suffixes_is_refused() {
+    let mut project = load_fixture().projects.swap_remove(0);
+    project.name = "p".to_string();
+    // A string, a list and a dict of one suffix are read as conf.py's are.
+    for (value, suffixes) in [
+        (serde_json::json!(".txt"), vec![".txt"]),
+        (serde_json::json!([".txt", ".rst"]), vec![".txt", ".rst"]),
+        (
+            serde_json::json!({ ".txt": "restructuredtext" }),
+            vec![".txt"],
+        ),
+    ] {
+        project.conf = serde_json::json!({ "source_suffix": value });
+        assert_eq!(
+            config_of(&project)
+                .source_suffix
+                .suffixes()
+                .collect::<Vec<_>>(),
+            suffixes
+        );
+    }
+    project.conf = serde_json::json!({
+        "source_suffix": { ".txt": "restructuredtext", ".rst": "restructuredtext" },
+    });
+    config_of(&project);
 }
 
 #[test]
@@ -1398,12 +1445,12 @@ fn resolved_doctrees_match_oracle() {
 /// each table names a fixture document (or project) exactly once — so the
 /// table lengths ARE the exemption counts. Update the six constants and
 /// the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 31;
-const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_PROJECTS: usize = 50;
+const DOCUMENTED_DOCUMENTS: usize = 139;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 89;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 139;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 50;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

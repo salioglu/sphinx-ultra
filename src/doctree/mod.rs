@@ -25,6 +25,8 @@ pub mod pending;
 pub mod pformat;
 
 pub(crate) use intern::intern;
+#[cfg(test)]
+pub(crate) use intern::MAX_INTERNED;
 
 use std::borrow::Cow;
 use std::num::NonZeroU32;
@@ -92,12 +94,16 @@ pub struct Attrs {
     pub dupnames: Vec<String>,
     pub classes: Vec<String>,
     pub backrefs: Vec<String>,
-    /// Kept sorted by key; use [`Node::set`] to maintain the invariant.
+    /// Kept sorted by key; use [`Node::set`] or [`Node::set_attr`] to
+    /// maintain the invariant. A key is borrowed when it is one of this
+    /// crate's own literals and owned when it is not: a `meta` node's
+    /// attribute names are the user's, and a decoded key is owned too
+    /// (`intern.rs`).
     #[serde(
         serialize_with = "intern::serialize_extra",
         deserialize_with = "intern::deserialize_extra"
     )]
-    pub extra: Vec<(&'static str, AttrValue)>,
+    pub extra: Vec<(Cow<'static, str>, AttrValue)>,
 }
 
 /// A node's identity within one document's read stage — what Python
@@ -349,7 +355,18 @@ impl Node {
     /// Set a scalar attribute, keeping `attrs.extra` sorted by key and
     /// overwriting any existing value for the same key.
     pub fn set(&mut self, key: &'static str, value: AttrValue) {
-        match self.attrs.extra.binary_search_by(|(k, _)| k.cmp(&key)) {
+        self.set_attr(Cow::Borrowed(key), value);
+    }
+
+    /// [`Node::set`] for a key that need not be one of this crate's own
+    /// literals: a `meta` node's attribute names, which the user chooses
+    /// (`MetaBody.parsemeta`'s `node[attname.lower()] = val`).
+    pub fn set_attr(&mut self, key: Cow<'static, str>, value: AttrValue) {
+        match self
+            .attrs
+            .extra
+            .binary_search_by(|(k, _)| k.as_ref().cmp(key.as_ref()))
+        {
             Ok(i) => self.attrs.extra[i].1 = value,
             Err(i) => self.attrs.extra.insert(i, (key, value)),
         }
@@ -358,7 +375,7 @@ impl Node {
     pub fn get(&self, key: &'static str) -> Option<&AttrValue> {
         self.attrs
             .extra
-            .binary_search_by(|(k, _)| k.cmp(&key))
+            .binary_search_by(|(k, _)| k.as_ref().cmp(key))
             .ok()
             .map(|i| &self.attrs.extra[i].1)
     }
@@ -1065,6 +1082,60 @@ Escaped letter "\a" and \`backtick\` done.
         assert_eq!(escaped.text_data(), "a\u{0}*b\u{0} c");
     }
 
+    /// A plain-text run that holds only an escaped space or an escaped line
+    /// end, between two inline elements, unescapes to nothing, but docutils
+    /// keeps its Text, `'\x00 '` or `'\x00\n'` (`implicit_inline`,
+    /// `SP/docutils/parsers/rst/states.py:1160`): pformat prints nothing
+    /// for it, and SmartQuotes reads it as whitespace before the next quote.
+    //
+    // oracle (Sphinx 9.1.0, the snippet harness of
+    //   tools/gen_sphinx_fixture.py, smartquotes off): `str()` of the
+    //   paragraph's Text nodes in order, and the pformat, as asserted.
+    #[test]
+    fn escaped_whitespace_runs_keep_their_text() {
+        let source = "*a*\\ *\"b\"* and **c**\\ ``d``\\ \"e\" and *f*\\\n*\"g\"*\n";
+        let data = [
+            "a",
+            "\u{0} ",
+            "\"b\"",
+            " and ",
+            "c",
+            "\u{0} ",
+            "d",
+            "\u{0} \"e\" and ",
+            "f",
+            "\u{0}\n",
+            "\"g\"",
+        ];
+        let pformat = concat!(
+            "<document source=\"<snippet>\">\n",
+            "    <paragraph>\n",
+            "        <emphasis>\n",
+            "            a\n",
+            "        <emphasis>\n",
+            "            \"b\"\n",
+            "         and \n",
+            "        <strong>\n",
+            "            c\n",
+            "        <literal>\n",
+            "            d\n",
+            "        \"e\" and \n",
+            "        <emphasis>\n",
+            "            f\n",
+            "        <emphasis>\n",
+            "            \"g\"\n",
+        );
+        for sphinx in [false, true] {
+            let tree = parse(source, sphinx);
+            let datas: Vec<String> = text_leaves(&tree.root)
+                .iter()
+                .map(|leaf| leaf.text_data().into_owned())
+                .collect();
+            assert_eq!(datas, data, "sphinx mode: {sphinx}");
+            assert_eq!(tree.root.pformat(), pformat, "sphinx mode: {sphinx}");
+        }
+    }
+
     /// Decision 10: `uid` and `raw` are read-stage metadata, so a side-car
     /// holding only them — or nothing — compares equal to no side-car,
     /// at any depth; `rawsource` and `pending` are tree data and count.
@@ -1103,11 +1174,11 @@ Escaped letter "\a" and \`backtick\` done.
         let bare = Node::elem("pending", Span::ZERO);
         let mut with_pending = bare.clone();
         with_pending.ext = Some(Box::new(NodeExt {
-            pending: Some(Box::new(pending::Pending {
-                transform: pending::PendingTransform::ClassAttribute,
-                order: 0,
-                details: Vec::new(),
-            })),
+            pending: Some(Box::new(pending::Pending::new(
+                pending::PendingTransform::ClassAttribute,
+                0,
+                Vec::new(),
+            ))),
             ..NodeExt::default()
         }));
         assert_ne!(with_pending, bare);

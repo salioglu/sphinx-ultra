@@ -35,6 +35,7 @@ mod support {
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
+use sphinx_ultra::builder::BuilderKind;
 use sphinx_ultra::config::BuildConfig;
 use sphinx_ultra::read::{read_standalone, ReadSettings};
 use sphinx_ultra::rst::{parse_rst_full, ParseOptions};
@@ -108,20 +109,20 @@ fn load_fixture() -> Fixture {
 }
 
 /// The read settings the fixture's header gives through a [`BuildConfig`]
-/// (M1's validation off, decision 7), with the id trace on.
+/// (M1's validation off, decision 7) for the dummy builder the oracle
+/// builds with, with the id trace on.
 fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
-    assert!(
-        !settings.smartquotes,
-        "no smart-quote transform exists yet, so only `smartquotes = False` \
-         reads like the oracle"
-    );
     ReadSettings {
         trace_ids: true,
-        ..ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            keep_warnings: settings.keep_warnings,
-            ..BuildConfig::default()
-        })
+        ..ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                keep_warnings: settings.keep_warnings,
+                smartquotes: settings.smartquotes,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 }
 
@@ -211,12 +212,7 @@ fn mismatches(fixture: &Fixture) -> BTreeMap<(String, &'static str), (Value, Val
 /// deletes or re-attributes a row by editing one line and a grep for an
 /// owner shows whole rows.
 #[rustfmt::skip]
-const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
-    ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
-    ("state.pending_serials", "pseudo_xml", "pending: 5a-T18b"),
-    ("state.pending_serials", "registries_post_parse", "pending: 5a-T18a"),
-    ("state.pending_serials", "warnings", "pending: 5a-T18a"),
-];
+const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[];
 
 /// Holds every key of every read-state case to the oracle, strictly, against
 /// [`KNOWN_READ_STATE_GAPS`].
@@ -376,30 +372,23 @@ fn warning_census(expected: &Value, actual: &Value) -> Census {
             }
         }
         for record in hunk.added {
-            // The structure directives T18a ports are unknown to us.
-            let pending = record.contains("Unknown directive type")
-                && ["contents", "sectnum", "target-notes"]
-                    .iter()
-                    .any(|name| record.contains(&format!("\"{name}\"")));
-            if pending {
-                census.add(read_gaps::PENDING_DIRECTIVES);
-            } else {
-                census
-                    .unexplained
-                    .push(format!("a record only we print: {record:?}"));
-            }
+            census
+                .unexplained
+                .push(format!("a record only we print: {record:?}"));
         }
     }
     census
 }
 
-/// Substitutions' (220) and Footnotes' (620) families, ported in T11, and
-/// AutoNumbering's (210), ported in T12. Like T10's (`dangling refs`,
-/// `indirect targets`), they stay for the ids those transforms allocate,
-/// which later tasks' rows can shift.
+/// Substitutions' (220) and Footnotes' (620) families, ported in T11,
+/// AutoNumbering's (210), ported in T12, and the pending transforms' that
+/// allocate ids, TargetNotes (540) and Contents (720), ported in T18b.
+/// Like T10's (`dangling refs`, `indirect targets`), they stay for the ids
+/// those transforms allocate, which later tasks' rows can shift.
 const SUBSTITUTIONS: GapFix = read_gaps::gap_fix("substitutions", "5a-T11");
 const FOOTNOTES: GapFix = read_gaps::gap_fix("footnotes", "5a-T11");
 const AUTONUMBER_IDS: GapFix = read_gaps::gap_fix("autonumber ids", "5a-T12");
+const PENDING: GapFix = read_gaps::gap_fix("pending", "5a-T18b");
 
 /// The transforms that allocate ids in the corpus, by `python_name`, with
 /// the task that ports each [DS §5.2].
@@ -421,14 +410,8 @@ const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
         read_gaps::DANGLING_REFS,
     ),
     ("docutils.transforms.references.Footnotes", FOOTNOTES),
-    (
-        "docutils.transforms.references.TargetNotes",
-        read_gaps::PENDING_TRANSFORMS,
-    ),
-    (
-        "docutils.transforms.parts.Contents",
-        read_gaps::PENDING_TRANSFORMS,
-    ),
+    ("docutils.transforms.references.TargetNotes", PENDING),
+    ("docutils.transforms.parts.Contents", PENDING),
     ("sphinx.transforms.AutoNumbering", AUTONUMBER_IDS),
 ];
 
@@ -481,25 +464,9 @@ fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Cens
     let expected_parse = without_attachment(&expected_events);
     let actual_parse = without_attachment(&actual_events);
     if expected_parse != actual_parse {
-        // The contents directive's topic is the parse event T18a adds.
-        let missing: BTreeSet<_> = expected_parse
-            .iter()
-            .filter(|event| !actual_parse.contains(event))
-            .collect();
-        let extra = actual_parse
-            .iter()
-            .any(|event| !expected_parse.contains(event));
-        if !extra
-            && missing
-                .iter()
-                .all(|(kind, id)| kind == "topic" && id == "contents")
-        {
-            census.add(read_gaps::PENDING_DIRECTIVES);
-        } else {
-            census.unexplained.push(format!(
-                "parse events differ: expected {expected_parse:?}, actual {actual_parse:?}"
-            ));
-        }
+        census.unexplained.push(format!(
+            "parse events differ: expected {expected_parse:?}, actual {actual_parse:?}"
+        ));
     } else {
         let flipped = expected_events
             .iter()
@@ -521,8 +488,9 @@ fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Cens
     census
 }
 
-/// The families of a `registries_post_parse` divergence: names the parse
-/// registers that ours does not.
+/// The families of a `registries_post_parse` divergence. The parse
+/// registers what docutils' does since the structure directives' parse
+/// halves (T18a), so any divergence is unexplained.
 fn registries_census(expected: &Value, actual: &Value) -> Census {
     let mut census = Census::default();
     let keys: BTreeSet<&String> = expected
@@ -532,30 +500,7 @@ fn registries_census(expected: &Value, actual: &Value) -> Census {
         .flat_map(|registries| registries.keys())
         .collect();
     for key in keys {
-        if expected[key] == actual[key] {
-            continue;
-        }
-        let names = |value: &Value| -> Vec<String> {
-            value
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|entry| entry[0].as_str().map(str::to_string))
-                .collect()
-        };
-        let missing: Vec<String> = names(&expected[key])
-            .into_iter()
-            .filter(|name| !names(&actual[key]).contains(name))
-            .collect();
-        // The contents directive's topic registers `contents` (T18a).
-        let only_contents = key == "names"
-            && missing == ["contents"]
-            && names(&actual[key])
-                .iter()
-                .all(|name| names(&expected[key]).contains(name));
-        if only_contents {
-            census.add(read_gaps::PENDING_DIRECTIVES);
-        } else {
+        if expected[key] != actual[key] {
             census.unexplained.push(format!(
                 "{key}: expected {}, actual {}",
                 expected[key], actual[key]

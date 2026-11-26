@@ -2366,6 +2366,74 @@ mod tests {
         assert!(!terms.contains_key("thi"));
     }
 
+    /// `.. header::` and `.. footer::` fill the document's `decoration`,
+    /// which the first of them inserts as the document's first child that
+    /// is not a title, subtitle, rubric or meta; every later `header`
+    /// extends the same header, and the substitutions (220) reach the
+    /// decoration like any other node. The body never holds what they
+    /// parse (Sphinx's HTML writer moves the decoration out of the page
+    /// body, wave 5b), but the search indexer walks the whole doctree, so
+    /// their words are terms of the page.
+    //
+    // oracle: Sphinx 9.1.0 (scratchpad/t18a/probes/sbuild.py, project
+    //   `header_footer`): the dummy build's post-read doctree and the html
+    //   build's searchindex.js.
+    #[test]
+    fn header_footer_build_decoration() {
+        let mut env = BuildEnvironment::default();
+        let read = read_project(
+            &[(
+                "index",
+                ".. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n\
+                 .. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n\
+                 .. header:: Second header para\n",
+            )],
+            &mut env,
+        );
+        let pformat = read[0].1.root.pformat();
+        let (_, body) = pformat.split_once('\n').expect("a document line");
+        assert_eq!(
+            body,
+            concat!(
+                "    <decoration>\n",
+                "        <header>\n",
+                "            <paragraph>\n",
+                "                Top \n",
+                "                <emphasis>\n",
+                "                    header\n",
+                "                 text\n",
+                "            <paragraph>\n",
+                "                Second header para\n",
+                "        <footer>\n",
+                "            <paragraph>\n",
+                "                Bottom footer \n",
+                "                today-ish\n",
+                "    <substitution_definition names=\"date\">\n",
+                "        today-ish\n",
+                "    <section ids=\"title\" names=\"title\">\n",
+                "        <title>\n",
+                "            Title\n",
+                "        <paragraph>\n",
+                "            Body.\n",
+            )
+        );
+
+        let value = feed_read(&read, &env).freeze(&env);
+        assert_eq!(
+            value["terms"],
+            serde_json::json!({
+                "bodi": 0, "bottom": 0, "footer": 0, "header": 0, "ish": 0,
+                "para": 0, "second": 0, "text": 0, "today": 0, "top": 0,
+            })
+        );
+        assert_eq!(value["titles"], serde_json::json!(["Title"]));
+        assert_eq!(value["titleterms"], serde_json::json!({"titl": 0}));
+        assert_eq!(
+            value["alltitles"],
+            serde_json::json!({"Title": [[0, null]]})
+        );
+    }
+
     #[test]
     fn nosearch_documents_keep_their_slot_and_contribute_nothing() {
         let mut env = BuildEnvironment::default();

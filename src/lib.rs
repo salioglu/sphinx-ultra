@@ -39,6 +39,7 @@ pub mod inventory;
 pub mod matching;
 pub mod parser;
 pub mod py;
+pub(crate) mod pyformat;
 pub mod python_config;
 pub mod read;
 pub mod rst;

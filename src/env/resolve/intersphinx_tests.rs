@@ -130,6 +130,7 @@ fn resolve(isx: &Intersphinx, mut doctree: Doctree) -> Resolved {
         env: &env,
         numfig: true,
         numfig_format: &formats,
+        math: crate::env::math::MathConfig::default(),
         doctree: &|_| None,
         relative_uri: &|_, _| String::new(),
         intersphinx: isx,

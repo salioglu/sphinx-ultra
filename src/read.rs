@@ -31,9 +31,11 @@ use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
-use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport};
+use crate::pyformat;
+use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport, SphinxCrash};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
+use crate::transforms::smartquotes::{self, SmartQuotesSettings};
 use crate::transforms::state::DocumentState;
 use crate::transforms::tags::Tags;
 use crate::transforms::{Transform, TransformId};
@@ -42,7 +44,8 @@ use crate::transforms::{Transform, TransformId};
 /// resolve pass after it: `trim_doctest_flags`, which
 /// [`resolve_standalone`] takes from here (a build's resolve pass reads its
 /// configuration). Every field holds Sphinx's default unless the
-/// configuration says otherwise ([`Self::from_config`]).
+/// configuration, or the builder the read is for, says otherwise
+/// ([`Self::from_config`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSettings {
     /// `keep_warnings` (`SP/sphinx/config.py:261`, default `False`): whether
@@ -74,16 +77,27 @@ pub struct ReadSettings {
     /// It is resolved once, when the settings are made ([`build_date`]):
     /// every document of a build reads the same date, and no transform
     /// reads the environment.
-    pub build_date: DateTime<Utc>,
+    pub build_date: BuildDate,
     /// `language` (`SP/sphinx/config.py:230`, default `'en'`): the language
     /// whose variant of an image the image collector prefers
-    /// ([`crate::env::collectors::images`]).
+    /// ([`crate::env::collectors::images`]), and the document's language
+    /// for `SphinxSmartQuotes` (750), the one a block no `language-*`
+    /// class names is educated in ([`crate::transforms::smartquotes`]).
     pub language: String,
     /// `trim_doctest_flags` (`SP/sphinx/config.py:267`, default `True`):
     /// whether the resolve pass's `TrimDoctestFlagsTransform` strips doctest
     /// flags ([`crate::transforms::post`]), which [`resolve_standalone`]
     /// reads here.
     pub trim_doctest_flags: bool,
+    /// What `SphinxSmartQuotes` (750) educates
+    /// ([`crate::transforms::smartquotes`]), in [`Self::language`]; `None`
+    /// when its availability test turns it off for the build:
+    /// `smartquotes`, the builder or the language in
+    /// `smartquotes_excludes`, or a language docutils has no quotes for
+    /// ([`smartquotes::settings_for`], which [`Self::from_config`] runs
+    /// for the language it gives [`Self::language`]). Sphinx's default
+    /// educates `qDe` in English.
+    pub smartquotes: Option<SmartQuotesSettings>,
 }
 
 impl ReadSettings {
@@ -99,52 +113,68 @@ impl ReadSettings {
             build_date: build_date(),
             language: "en".to_string(),
             trim_doctest_flags: true,
+            smartquotes: Some(SmartQuotesSettings::default()),
         }
     }
 
-    /// The read settings of a build configured by `config`, dated as a
-    /// build that starts now ([`build_date`]).
-    pub fn from_config(config: &BuildConfig) -> Self {
+    /// The read settings of a build configured by `config` with the builder
+    /// `builder`, dated as a build that starts now ([`build_date`]). The
+    /// builder decides one thing a read does: whether
+    /// `smartquotes_excludes` turns smart quotes off for it.
+    pub fn from_config(config: &BuildConfig, builder: BuilderKind) -> Self {
+        // Sphinx reads a `language` of `None` as `'en'`
+        // (`SP/sphinx/config.py:573-581`).
+        let language = config.language.clone().unwrap_or_else(|| "en".to_string());
         ReadSettings {
             keep_warnings: config.keep_warnings,
             today: config.today.clone(),
             today_fmt: config.today_fmt.clone(),
             version: config.version.clone().unwrap_or_default(),
             release: config.release.clone().unwrap_or_default(),
-            // Sphinx reads a `language` of `None` as `'en'`
-            // (`SP/sphinx/config.py:573-581`).
-            language: config.language.clone().unwrap_or_else(|| "en".to_string()),
+            smartquotes: smartquotes::settings_for(config, &language, builder.name()),
+            language,
             trim_doctest_flags: config.trim_doctest_flags,
             ..Self::sphinx_defaults()
         }
     }
 }
 
+/// The date `|today|` formats ([`ReadSettings::build_date`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildDate {
+    /// A date Python's `datetime` holds.
+    Date(DateTime<Utc>),
+    /// The year of a `SOURCE_DATE_EPOCH` that `time.gmtime` reads, outside
+    /// the years 1 to 9999 Python's `datetime` holds: `format_date` raises
+    /// `ValueError: year N is out of range` where `|today|` is substituted,
+    /// which crashes Sphinx 9.1.0 (decision 13).
+    OutOfRange(i64),
+}
+
 /// The date `|today|` formats in a build that starts now
 /// ([`ReadSettings::build_date`]): `SOURCE_DATE_EPOCH`, read as Sphinx's
 /// `format_date` reads it ([`date_of_epoch`]), when it is set, and the
-/// current time otherwise. A value Sphinx cannot read crashes it where
-/// `|today|` is used; that input is not modelled (decision 13), and the
-/// build takes the current time instead.
-fn build_date() -> DateTime<Utc> {
+/// current time otherwise. A value that crashes Sphinx before it reads a
+/// document ([`source_date_epoch_import_crash`]) fails a build before
+/// these settings are made; here it is the current time.
+fn build_date() -> BuildDate {
     std::env::var("SOURCE_DATE_EPOCH")
         .ok()
         .and_then(|epoch| date_of_epoch(&epoch))
-        .unwrap_or_else(Utc::now)
+        .unwrap_or_else(|| BuildDate::Date(Utc::now()))
 }
 
 /// `datetime.fromtimestamp(float(epoch), tz=UTC)`
-/// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, which
-/// may have a fraction and surrounding whitespace, its whole seconds taken
-/// toward zero and the fraction rounded half to even to microseconds, a
-/// rounded fraction of a whole second carried into the seconds (CPython's
-/// `_fromtimestamp`). `None` for what `float()` rejects (Python's
-/// underscore-separated digits are not read) and for a date outside
-/// Python's years 1 to 9999.
-fn date_of_epoch(epoch: &str) -> Option<DateTime<Utc>> {
-    use chrono::Datelike;
-    let timestamp: f64 = epoch.trim_matches(crate::utils::py_isspace).parse().ok()?;
-    if !timestamp.is_finite() {
+/// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, read
+/// as Python's `float()` reads it ([`pyformat::float`]), its whole seconds
+/// taken toward zero and the fraction rounded half to even to
+/// microseconds, a rounded fraction of a whole second carried into the
+/// seconds (CPython's `_fromtimestamp`), and a year outside Python's 1 to
+/// 9999 [`BuildDate::OutOfRange`]. `None` for what crashes Sphinx before
+/// the read ([`source_date_epoch_import_crash`]).
+fn date_of_epoch(epoch: &str) -> Option<BuildDate> {
+    let timestamp = pyformat::float(epoch).ok()?;
+    if !timestamp.is_finite() || !holds_in_time_t(timestamp) {
         return None;
     }
     let mut seconds = timestamp.trunc();
@@ -156,13 +186,107 @@ fn date_of_epoch(epoch: &str) -> Option<DateTime<Utc>> {
         seconds -= 1.0;
         micros += 1e6;
     }
-    // Both are whole numbers in range here: `seconds` is bounded below
-    // (more than Python's years allow), and `micros` lies in 0..1_000_000.
-    if seconds.abs() >= 1e15 {
+    // Whole numbers in range here: `time_t` holds `seconds`, which is
+    // within a second of the timestamp, and `micros` lies in 0..1_000_000.
+    let year = civil_year(seconds as i64);
+    if !struct_tm_holds(year) {
         return None;
     }
-    DateTime::from_timestamp(seconds as i64, micros as u32 * 1000)
-        .filter(|date| (1..=9999).contains(&date.year()))
+    if !(1..=9999).contains(&year) {
+        return Some(BuildDate::OutOfRange(year));
+    }
+    DateTime::from_timestamp(seconds as i64, micros as u32 * 1000).map(BuildDate::Date)
+}
+
+/// `SOURCE_DATE_EPOCH` as Sphinx 9.1.0 reads it first, while it sets its
+/// application up, before it logs anything about the configuration:
+/// importing `sphinx.builders.gettext` takes `time.gmtime(float(value))`
+/// (`SP/sphinx/builders/gettext.py:200-206`), which raises, and crashes
+/// Sphinx (decision 13), for what `float()` rejects ([`pyformat::float`]),
+/// for NaN, for a time the platform's `time_t` does not hold, and for one
+/// in a year `struct tm` does not hold, whose `OSError` names the
+/// platform's `EOVERFLOW`. The crash `value` makes, if any.
+///
+/// Not modelled: Windows' `gmtime`, which also fails before 1970 and
+/// after 3000.
+pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
+    let raise = |exception, message: &str| {
+        Some(SphinxCrash::python(
+            exception,
+            message.to_string(),
+            LogLocation::None,
+        ))
+    };
+    let timestamp = match pyformat::float(value) {
+        Ok(timestamp) => timestamp,
+        Err(message) => return raise("ValueError", &message),
+    };
+    if timestamp.is_nan() {
+        return raise("ValueError", "Invalid value NaN (not a number)");
+    }
+    if !holds_in_time_t(timestamp) {
+        return raise(
+            "OverflowError",
+            "timestamp out of range for platform time_t",
+        );
+    }
+    if !struct_tm_holds(civil_year(timestamp.floor() as i64)) {
+        return raise("OSError", EOVERFLOW);
+    }
+    None
+}
+
+/// `SOURCE_DATE_EPOCH` as Sphinx 9.1.0 reads it next, at `config-inited`:
+/// `correct_copyright_year` (`SP/sphinx/config.py:711-738`) takes
+/// `int(value)`, which raises for what `int()` rejects in base 10, a
+/// fraction or an exponent `float()` reads among them, and for more digits
+/// than it reads ([`pyformat::int`]). Sphinx reports the handler's
+/// exception as an `ExtensionError` naming the handler, and crashes
+/// (decision 13). The crash `value` makes, if any.
+pub fn source_date_epoch_config_crash(value: &str) -> Option<SphinxCrash> {
+    let error = pyformat::int(value).err()?;
+    Some(SphinxCrash::extension_error(
+        "Extension error (sphinx.config)",
+        "correct_copyright_year",
+        "config-inited",
+        &error,
+    ))
+}
+
+/// Python's `str(OSError(EOVERFLOW))`, `[Errno N] strerror(N)`, on the
+/// platforms the build is probed on: macOS's, and Linux's elsewhere.
+const EOVERFLOW: &str = if cfg!(target_os = "macos") {
+    "[Errno 84] Value too large to be stored in data type"
+} else {
+    "[Errno 75] Value too large for defined data type"
+};
+
+/// Whether CPython's `time_t` conversion takes `timestamp`, whose floor
+/// must lie in `[-2**63, 2**63)` (`_PyTime_ObjectToTime_t`): an infinity
+/// does not.
+fn holds_in_time_t(timestamp: f64) -> bool {
+    const BOUND: f64 = 9_223_372_036_854_775_808.0;
+    (-BOUND..BOUND).contains(&timestamp.floor())
+}
+
+/// Whether `gmtime` gives `year`: `struct tm` holds the year less 1900 in
+/// an `int`, and `EOVERFLOW` is its answer past that.
+fn struct_tm_holds(year: i64) -> bool {
+    (i64::from(i32::MIN) + 1900..=i64::from(i32::MAX) + 1900).contains(&year)
+}
+
+/// The proleptic Gregorian year of the POSIX time `seconds` in UTC, as
+/// `gmtime` counts it (year 0 before year 1), whatever its range (Howard
+/// Hinnant's `civil_from_days`).
+fn civil_year(seconds: i64) -> i64 {
+    let days = seconds.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_index = (5 * doy + 2) / 153;
+    yoe + era * 400 + i64::from(month_index >= 10)
 }
 
 /// One document's read: the doctree and the docutils document state beside
@@ -192,6 +316,7 @@ impl ReadOutcome {
                 toctrees: Vec::new(),
                 registry: RegistryExport::default(),
                 state: DocumentState::default(),
+                roles_after: crate::rst::roles::RoleTable::default(),
             },
         }
     }
@@ -275,6 +400,7 @@ fn read_document_with(
 /// ([`source_dir_of`]).
 fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
     let srcdir = source_dir_of(parse);
+    let first_suffix = first_source_suffix(&parse.read);
     let sources = &output.doctree.sources;
     let key = |seq| OrderKey {
         priority: 0,
@@ -285,7 +411,7 @@ fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
         .into_iter()
         .map(|warning| LogRecord::Logger {
             key: key(warning.seq),
-            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
+            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname, first_suffix),
         });
     let toctree = output
         .toctrees
@@ -293,13 +419,37 @@ fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
         .flat_map(|toctree| &toctree.warnings)
         .map(|warning| LogRecord::Logger {
             key: key(warning.seq),
-            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
+            diagnostic: warning.diagnostic(sources, &srcdir),
         });
     let log = &mut output.state.log;
     log.extend(logged.chain(toctree));
     // Every parse record drew its own seq: the stable sort restores the
     // creation order the reporter's records were logged in.
     log.sort_by_key(LogRecord::key);
+}
+
+/// `source_suffix[0]` of the read's configuration, `''` when it names no
+/// suffix: what `doc2path` appends to a name the project has no file for.
+fn first_source_suffix(read: &ReadConfig) -> &str {
+    read.source_suffix.first().map_or("", String::as_str)
+}
+
+/// `env.doc2path(docname)` for a project of one document, `own` read from
+/// `own_path`: `<srcdir>/<docname>` with the suffix of its own file for
+/// its own name, and with `source_suffix[0]` for any other, which it has
+/// no file for (`Project.doc2path`, `SP/sphinx/project.py:114-128`).
+fn standalone_doc2path(
+    docname: &str,
+    own: &str,
+    own_path: &Path,
+    source_dir: &Path,
+    read: &ReadConfig,
+) -> PathBuf {
+    let own_suffix = (docname == own)
+        .then(|| crate::rst::own_suffix(own, &own_path.to_string_lossy()).map(str::to_string))
+        .flatten();
+    let suffix = own_suffix.as_deref().unwrap_or(first_source_suffix(read));
+    source_dir.join(format!("{docname}{suffix}"))
 }
 
 /// The source directory a read's logger locations render against: the
@@ -342,6 +492,11 @@ pub struct MergeInputs<'a> {
 /// record with no source of its own is located at
 /// [`MergeInputs::source_path`]), stable-sorted by key, keys dropped. The
 /// log itself is left in place.
+///
+/// A read that crashed (decision 13, [`DocumentState::crash`]) is not
+/// merged: Sphinx's read of the document stopped where it raised, so the
+/// records are the ones the read logged before the crash, and `env` is
+/// left as it is.
 pub fn merge_document(
     env: &mut BuildEnvironment,
     docname: &str,
@@ -349,6 +504,10 @@ pub fn merge_document(
     inputs: &MergeInputs<'_>,
     settings: &ReadSettings,
 ) -> Vec<Diagnostic> {
+    if outcome.state().crash.is_some() {
+        let records = outcome.state().log_before_crash();
+        return in_key_order(records, &outcome.doctree().sources, inputs.source_path);
+    }
     let merged = crate::transforms::run_merge_transforms(outcome, env, docname, inputs, settings);
     let mut records = outcome.state().log.clone();
     records.extend(merged);
@@ -412,7 +571,15 @@ fn read_standalone_with(
     let source_path = Path::new(&parse.source_path);
     let source_dir = source_dir_of(parse);
     let diagnostics = if parse.sphinx {
-        let doc2path = |docname: &str| source_dir.join(format!("{docname}.rst"));
+        let doc2path = |docname: &str| {
+            standalone_doc2path(
+                docname,
+                &parse.docname,
+                source_path,
+                &source_dir,
+                &parse.read,
+            )
+        };
         let inputs = MergeInputs {
             source_path,
             source_dir: &source_dir,
@@ -481,6 +648,7 @@ pub fn resolve_standalone(
                 &post_read.sources,
                 &read.source_dir,
                 &read.docname,
+                first_source_suffix(&read.read_config),
                 warning.message.clone(),
                 warning
                     .category
@@ -497,6 +665,7 @@ pub fn resolve_standalone(
         env: &env,
         numfig: false,
         numfig_format: &numfig_format,
+        math: crate::env::math::MathConfig::default(),
         doctree: &load_doctree,
         relative_uri: &|_, _| String::new(),
         intersphinx: &intersphinx,
@@ -523,6 +692,11 @@ pub fn resolve_standalone(
         &mut doctree,
     );
     records.extend(post.records);
+    // A reference that crashes Sphinx ends the write there (decision 13),
+    // as it ends a build's resolve pass; the oracles record no such input.
+    if post.crash.is_some() {
+        return (doctree, records);
+    }
 
     // Then the document's own toctrees, as the builder's resolve pass
     // resolves them. Every entry naming a document was dropped by the
@@ -530,7 +704,15 @@ pub fn resolve_standalone(
     // patterns word: Sphinx's default patterns stand in for the snippets'
     // `exclude_patterns = ['_build']` (`tools/gen_sphinx_fixture.py`,
     // `tools/gen_html_oracle.py`) and change nothing.
-    let doc2path = |docname: &str| read.source_dir.join(format!("{docname}.rst"));
+    let doc2path = |docname: &str| {
+        standalone_doc2path(
+            docname,
+            &read.docname,
+            &read.source_path,
+            &read.source_dir,
+            &read.read_config,
+        )
+    };
     let sources = |docname: &str| (docname == read.docname).then_some(post_read.sources.as_slice());
     let include_patterns = ["**".to_string()];
     let locations = ToctreeLocations {
@@ -605,9 +787,11 @@ mod tests {
     }
 
     /// The read settings follow the configuration, Sphinx's defaults
-    /// otherwise (`config.py:225-230`, `:261`, `:267`); the trace is a test
-    /// switch no configuration sets. The build date is the moment the settings
-    /// were made, so the comparisons carry it over.
+    /// otherwise (`config.py:225-230`, `:261`, `:267`, `:289-295`); the
+    /// trace is a test switch no configuration sets. Smart quotes follow
+    /// the builder too, which `smartquotes_excludes` may name. The build
+    /// date is the moment the settings were made, so the comparisons carry
+    /// it over.
     #[test]
     fn read_settings_follow_the_configuration() {
         let defaults = ReadSettings::sphinx_defaults();
@@ -623,15 +807,19 @@ mod tests {
                 build_date: defaults.build_date,
                 language: "en".to_string(),
                 trim_doctest_flags: true,
+                smartquotes: Some(SmartQuotesSettings::default()),
             }
         );
-        assert_eq!(
-            ReadSettings {
-                build_date: defaults.build_date,
-                ..ReadSettings::from_config(&BuildConfig::default())
-            },
-            defaults
-        );
+        for builder in [BuilderKind::Html, BuilderKind::Dummy] {
+            assert_eq!(
+                ReadSettings {
+                    build_date: defaults.build_date,
+                    ..ReadSettings::from_config(&BuildConfig::default(), builder)
+                },
+                defaults,
+                "{builder:?}"
+            );
+        }
         let config = BuildConfig {
             keep_warnings: true,
             today: "April 1".to_string(),
@@ -640,9 +828,10 @@ mod tests {
             release: Some("1.2.3".to_string()),
             language: Some("de".to_string()),
             trim_doctest_flags: false,
+            smartquotes_action: "qe".to_string(),
             ..BuildConfig::default()
         };
-        let settings = ReadSettings::from_config(&config);
+        let settings = ReadSettings::from_config(&config, BuilderKind::Html);
         assert!(!settings.trim_doctest_flags);
         assert!(settings.keep_warnings);
         assert!(!settings.trace_ids);
@@ -653,27 +842,68 @@ mod tests {
             ("1.2", "1.2.3")
         );
         assert_eq!(settings.language, "de");
+        assert_eq!(
+            settings.smartquotes,
+            Some(SmartQuotesSettings {
+                actions: smartquotes::educate::Actions::parse("qe"),
+            })
+        );
         let unset = BuildConfig {
             language: None,
             ..BuildConfig::default()
         };
-        assert_eq!(ReadSettings::from_config(&unset).language, "en");
+        let unset = ReadSettings::from_config(&unset, BuilderKind::Html);
+        assert_eq!(unset.language, "en");
+        assert_eq!(unset.smartquotes, Some(SmartQuotesSettings::default()));
+
+        let off = BuildConfig {
+            smartquotes: false,
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            ReadSettings::from_config(&off, BuilderKind::Html).smartquotes,
+            None
+        );
+        let excluding_dummy = BuildConfig {
+            smartquotes_excludes: crate::config::SmartquotesExcludes {
+                languages: crate::config::ExcludedNames::default(),
+                builders: crate::config::ExcludedNames::Names(vec!["dummy".to_string()]),
+            },
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            ReadSettings::from_config(&excluding_dummy, BuilderKind::Dummy).smartquotes,
+            None
+        );
+        assert_eq!(
+            ReadSettings::from_config(&excluding_dummy, BuilderKind::Html).smartquotes,
+            Some(SmartQuotesSettings::default())
+        );
     }
 
     /// `SOURCE_DATE_EPOCH` read as `datetime.fromtimestamp(float(value),
     /// tz=UTC)` (`SP/sphinx/util/i18n.py:274-276`): whole and fractional
-    /// seconds, Python's surrounding whitespace, the fraction rounded half
-    /// to even to microseconds and carried; what Sphinx cannot read is not
-    /// a date.
+    /// seconds, Python's surrounding whitespace and digit groups, the
+    /// fraction rounded half to even to microseconds and carried; a year
+    /// `datetime` does not hold is out of range; what crashes Sphinx before
+    /// the read is not a date.
     //
     // oracle (CPython 3.12): `datetime.fromtimestamp(float(v), tz=UTC)`
     //   for each value below.
     #[test]
     fn source_date_epoch_reads_as_python_does() {
-        let date = |epoch: &str| date_of_epoch(epoch).map(|date| date.to_rfc3339());
+        let date = |epoch: &str| match date_of_epoch(epoch) {
+            Some(BuildDate::Date(date)) => Some(date.to_rfc3339()),
+            Some(BuildDate::OutOfRange(year)) => Some(format!("year {year} is out of range")),
+            None => None,
+        };
         assert_eq!(date("0").as_deref(), Some("1970-01-01T00:00:00+00:00"));
         assert_eq!(
             date(" 1700000000\n").as_deref(),
+            Some("2023-11-14T22:13:20+00:00")
+        );
+        assert_eq!(
+            date("1_700_000_000").as_deref(),
             Some("2023-11-14T22:13:20+00:00")
         );
         assert_eq!(
@@ -681,6 +911,7 @@ mod tests {
             Some("2023-11-14T22:13:20.250+00:00")
         );
         assert_eq!(date("1.7e9").as_deref(), Some("2023-11-14T22:13:20+00:00"));
+        assert_eq!(date("1e1_0").as_deref(), Some("2286-11-20T17:46:40+00:00"));
         assert_eq!(
             date("1699999999.9999996").as_deref(),
             Some("2023-11-14T22:13:20+00:00")
@@ -689,8 +920,218 @@ mod tests {
             date("-1.5").as_deref(),
             Some("1969-12-31T23:59:58.500+00:00")
         );
-        for unreadable in ["", "soon", "inf", "nan", "1e300", "1e12"] {
+        assert_eq!(
+            date("253402300799").as_deref(),
+            Some("9999-12-31T23:59:59+00:00")
+        );
+        // `float()` makes the text ASCII first: a decimal digit of any
+        // script is its ASCII digit (ARABIC-INDIC, FULLWIDTH, mixed and
+        // grouped), and any whitespace past ASCII a space; it then strips
+        // ASCII whitespace, which `\v` and `\f` are and the C0 separators
+        // `\x1c`-`\x1f` are not.
+        for epoch in [
+            "\u{661}\u{667}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+            "\u{ff11}\u{ff17}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}",
+            "1\u{667}00000000",
+            "\u{661}_\u{667}\u{660}\u{660}_\u{660}\u{660}\u{660}_\u{660}\u{660}\u{660}",
+            "\u{a0}1700000000\u{3000}",
+            "\u{85}1700000000\u{2028}",
+            "\x0b1700000000\x0c",
+        ] {
+            assert_eq!(
+                date(epoch).as_deref(),
+                Some("2023-11-14T22:13:20+00:00"),
+                "{epoch:?}"
+            );
+        }
+        assert_eq!(
+            date("\u{661}.\u{665}").as_deref(),
+            Some("1970-01-01T00:00:01.500+00:00")
+        );
+        // Any number of digits, past `int()`'s limit of 4,300.
+        assert_eq!(
+            date(&format!("{}1", "0".repeat(4300))).as_deref(),
+            Some("1970-01-01T00:00:01+00:00")
+        );
+        for (epoch, year) in [
+            ("253402300800", 10_000),
+            ("300000000000", 11_476),
+            (
+                "\u{663}\u{660}\u{660}\u{660}\u{660}\u{660}\
+                 \u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+                11_476,
+            ),
+            ("1e12", 33_658),
+            ("-62135596801", 0),
+            ("-99999999999", -1_199),
+            ("-6.77680406097408e+16", -2_147_481_748),
+        ] {
+            assert_eq!(
+                date(epoch),
+                Some(format!("year {year} is out of range")),
+                "{epoch:?}"
+            );
+        }
+        for unreadable in [
+            "",
+            "soon",
+            "1__0",
+            "1_.5",
+            "inf",
+            "nan",
+            "1e300",
+            "1e17",
+            "\x1c1700000000",
+            "1700000000\x1f",
+            "\u{b2}",
+            "\u{661}\u{66b}\u{665}",
+            "\u{661}__\u{660}",
+            "\u{ff49}\u{ff4e}\u{ff46}",
+        ] {
             assert_eq!(date(unreadable), None, "{unreadable:?}");
+        }
+    }
+
+    /// The two readings of `SOURCE_DATE_EPOCH` that crash Sphinx 9.1.0
+    /// before its read (decision 13): `time.gmtime(float(value))` when
+    /// `sphinx.builders.gettext` is imported, and `int(value)` in
+    /// `correct_copyright_year` at `config-inited`, which Sphinx reports
+    /// as an `ExtensionError` naming the handler.
+    //
+    // oracle (CPython 3.12): `time.gmtime(float(v))` and `int(v)` for each
+    //   value below (on macOS; Linux's `EOVERFLOW` is errno 75).
+    #[test]
+    fn source_date_epoch_crashes_as_sphinx_does() {
+        let import =
+            |epoch: &str| source_date_epoch_import_crash(epoch).map(|crash| crash.to_string());
+        let float = |epoch: &str| {
+            Some(format!(
+                "ValueError: could not convert string to float: {}",
+                crate::utils::py_repr_str(epoch)
+            ))
+        };
+        let overflow =
+            Some("OverflowError: timestamp out of range for platform time_t".to_string());
+        for (epoch, crash) in [
+            ("soon", float("soon")),
+            ("", float("")),
+            ("1__0", float("1__0")),
+            ("1_.5", float("1_.5")),
+            (
+                "nan",
+                Some("ValueError: Invalid value NaN (not a number)".to_string()),
+            ),
+            (
+                "+nan",
+                Some("ValueError: Invalid value NaN (not a number)".to_string()),
+            ),
+            ("inf", overflow.clone()),
+            ("-Infinity", overflow.clone()),
+            ("9.3e18", overflow.clone()),
+            ("1e300", overflow),
+            ("1e17", Some(format!("OSError: {EOVERFLOW}"))),
+            ("-1e17", Some(format!("OSError: {EOVERFLOW}"))),
+            // What `float()` does not make a digit or strip: the C0
+            // separators, SUPERSCRIPT TWO, ARABIC DECIMAL SEPARATOR.
+            ("\x1c1700000000", float("\x1c1700000000")),
+            ("1700000000\x1f", float("1700000000\x1f")),
+            ("\u{b2}", float("\u{b2}")),
+            ("\u{661}\u{66b}\u{665}", float("\u{661}\u{66b}\u{665}")),
+        ] {
+            assert_eq!(import(epoch), crash, "{epoch:?}");
+        }
+        for readable in [
+            "0",
+            " 12 ",
+            "1_000",
+            "1.5",
+            "1e3",
+            "-1",
+            "300000000000",
+            "-6.77680406097408e+16",
+            // A decimal digit of any script, and whitespace past ASCII.
+            "\u{661}\u{667}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+            "\u{ff11}\u{ff12}",
+            "\u{661}.\u{665}",
+            "\u{a0}12\u{3000}",
+            "\x0b12\x0c",
+        ] {
+            assert_eq!(import(readable), None, "{readable:?}");
+        }
+        // `float()` reads any number of digits, past `int()`'s limit.
+        assert_eq!(import(&format!("{}1", "0".repeat(4300))), None);
+
+        let config =
+            |epoch: &str| source_date_epoch_config_crash(epoch).map(|crash| crash.report());
+        let raised = |exception: &str| {
+            Some(format!(
+                "\nExtension error (sphinx.config)!\n\n    sphinx.errors.ExtensionError: Handler \
+                 <function correct_copyright_year at 0x...> for event 'config-inited' threw an \
+                 exception (exception: {exception})\n\n\
+                 Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it does.\n"
+            ))
+        };
+        let int = |literal: &str| {
+            raised(&format!(
+                "invalid literal for int() with base 10: {literal}"
+            ))
+        };
+        assert_eq!(config("1.5"), int("'1.5'"));
+        assert_eq!(config("1e3"), int("'1e3'"));
+        assert_eq!(config(" 1.5\n"), int("' 1.5\\n'"));
+        // `int()` makes the text ASCII as `float()` does, and names the
+        // text it was given.
+        assert_eq!(config("\u{661}.\u{665}"), int("'\u{661}.\u{665}'"));
+        assert_eq!(config("\u{661}e\u{663}"), int("'\u{661}e\u{663}'"));
+        assert_eq!(config("\x1c12"), int("'\\x1c12'"));
+        // ... cut to the first 200 characters of its `repr()` (`%.200R`).
+        let long_fraction = format!("1.{}", "5".repeat(300));
+        assert_eq!(
+            config(&long_fraction),
+            int(&format!("'1.{}", "5".repeat(197)))
+        );
+        let zeros = |count: usize| "0".repeat(count);
+        assert_eq!(
+            config(&format!("{}x", zeros(4301))),
+            int(&format!("'{}", zeros(199)))
+        );
+        // `int()` reads no more than 4,300 digits
+        // (`sys.get_int_max_str_digits()`), leading zeros and digits of any
+        // script among them, the sign, underscores and whitespace not; it
+        // checks the text first.
+        let limit = |digits: usize| {
+            raised(&format!(
+                "Exceeds the limit (4300 digits) for integer string conversion: value has \
+                 {digits} digits; use sys.set_int_max_str_digits() to increase the limit"
+            ))
+        };
+        for (label, epoch, digits) in [
+            ("zeros then 1", format!("{}1", zeros(4300)), 4301),
+            ("zeros", zeros(4301), 4301),
+            ("ARABIC-INDIC zeros", "\u{660}".repeat(4301), 4301),
+            ("signed", format!("+{}", zeros(4301)), 4301),
+            ("spaced", format!(" {}\n", zeros(4301)), 4301),
+            ("grouped", format!("{}1", "0_".repeat(4300)), 4301),
+            ("ones", "1".repeat(5000), 5000),
+        ] {
+            assert_eq!(config(&epoch), limit(digits), "{label}");
+        }
+        assert_eq!(config(&format!("{}1", zeros(4299))), None);
+        for readable in [
+            "0",
+            " 12 ",
+            "1_000",
+            "-1",
+            "+5",
+            "007",
+            "\u{661}\u{662}",
+            "+\u{ff11}\u{ff12}",
+            "\u{661}_\u{660}\u{660}\u{660}",
+            "1_\u{660}",
+            "\u{a0}12\u{3000}",
+            "\x0b12\x0c",
+        ] {
+            assert_eq!(config(readable), None, "{readable:?}");
         }
     }
 

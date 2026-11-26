@@ -21,12 +21,12 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::tags::Tags;
-use crate::diagnostics::{Category, Diagnostic};
+use crate::diagnostics::{Category, Diagnostic, Location, Severity};
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::resolve::{
     resolve_document, take_basic_atts, update_basic_atts, NitpickConfig, Resolver,
 };
-use crate::rst::LogLocation;
+use crate::rst::{LogLocation, SphinxCrash};
 
 /// What the post-transforms read besides the document and the resolver.
 pub struct PostTransformConfig<'a> {
@@ -53,6 +53,10 @@ pub struct PostTransformed {
     /// References into a domain this build has no resolver for
     /// ([`crate::env::resolve::DocumentResolution`]).
     pub unresolvable_domain_refs: usize,
+    /// The reference whose resolution crashes Sphinx 9.1.0 (decision 13):
+    /// the post-transforms stop there, as Sphinx's do, so `records` hold
+    /// the resolver's records before it alone.
+    pub crash: Option<SphinxCrash>,
 }
 
 /// `env.apply_post_transforms(doctree, docname)` under the html or the
@@ -80,12 +84,18 @@ pub fn apply_post_transforms(
         .into_iter()
         .map(Diagnostic::from)
         .collect();
+    if resolution.crash.is_some() {
+        return PostTransformed {
+            records,
+            unresolvable_domain_refs: resolution.unresolvable_domain_refs,
+            crash: resolution.crash,
+        };
+    }
     let Doctree { root, sources } = doctree;
     let only = OnlyCx {
         tags: config.tags,
         sources,
         source_dir: config.source_dir,
-        docname,
     };
     only_nodes(&only, root, &mut records);
     propagate_desc_domain(root);
@@ -94,6 +104,7 @@ pub fn apply_post_transforms(
     PostTransformed {
         records,
         unresolvable_domain_refs: resolution.unresolvable_domain_refs,
+        crash: None,
     }
 }
 
@@ -102,7 +113,6 @@ struct OnlyCx<'a> {
     tags: &'a Tags,
     sources: &'a [String],
     source_dir: &'a Path,
-    docname: &'a str,
 }
 
 /// 50 `OnlyNodeTransform` (`SP/sphinx/transforms/post_transforms/__init__.py:324-332`),
@@ -161,20 +171,23 @@ fn only_nodes(cx: &OnlyCx<'_>, parent: &mut Node, records: &mut Vec<Diagnostic>)
 /// `Only.run` stamps the node with the directive's own source and line
 /// (`set_source_info`), which `get_node_location` makes absolute.
 fn only_warning(cx: &OnlyCx<'_>, only: &Node, error: &str) -> Diagnostic {
-    let location = match only.span.line {
-        0 => LogLocation::None,
-        line => LogLocation::Node {
-            source: only.span.source,
-            line,
+    let message = format!("exception while evaluating only directive expression: {error}");
+    match only.span.line {
+        0 => Diagnostic {
+            location: Location::None,
+            severity: Severity::Warning,
+            message,
+            category: Category::None,
         },
-    };
-    location.warning(
-        cx.sources,
-        cx.source_dir,
-        cx.docname,
-        format!("exception while evaluating only directive expression: {error}"),
-        Category::None,
-    )
+        line => LogLocation::node_warning(
+            cx.sources,
+            cx.source_dir,
+            only.span.source,
+            line,
+            message,
+            Category::None,
+        ),
+    }
 }
 
 /// `nodes.comment()`, which an `only` node gives way to.
@@ -388,11 +401,14 @@ mod tests {
     /// The read settings of a build with M1's validation off and
     /// `trim_doctest_flags` as given.
     fn settings(trim_doctest_flags: bool) -> ReadSettings {
-        ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            trim_doctest_flags,
-            ..BuildConfig::default()
-        })
+        ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                trim_doctest_flags,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 
     /// `rst` read as `<SRCDIR>/index.rst` and resolved as `kind` resolves

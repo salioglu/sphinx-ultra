@@ -105,3 +105,74 @@ fn max_len_follows_the_python_or_global_or_zero_chain() {
          guard at the call site turns the feature off"
     );
 }
+
+/// An oracle fixture's `conf` dict maps onto the configuration key by key
+/// ([`PySigConfig::apply_conf_key`]): its keys set, any other key left to
+/// the caller, and a value of the wrong shape an error naming the key — a
+/// non-integer line length included, which must not read as "no limit".
+#[test]
+fn conf_keys_map_onto_the_py_sig_config() {
+    let conf: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+        r#"{
+            "maximum_signature_line_length": 8,
+            "python_maximum_signature_line_length": null,
+            "python_trailing_comma_in_multi_line_signatures": false,
+            "python_use_unqualified_type_names": true,
+            "toc_object_entries_show_parents": "all",
+            "add_function_parentheses": false
+        }"#,
+    )
+    .unwrap();
+    let mut py = PySigConfig::default();
+    for (key, value) in &conf {
+        assert_eq!(py.apply_conf_key(key, value), Ok(true), "{key}");
+    }
+    assert_eq!(
+        py,
+        PySigConfig {
+            maximum_signature_line_length: Some(8),
+            python_maximum_signature_line_length: None,
+            python_trailing_comma_in_multi_line_signatures: false,
+            python_use_unqualified_type_names: true,
+            toc_object_entries_show_parents: "all".to_string(),
+            add_function_parentheses: false,
+            ..PySigConfig::default()
+        }
+    );
+
+    let mut untouched = PySigConfig::default();
+    assert_eq!(
+        untouched.apply_conf_key("numfig", &serde_json::Value::Bool(true)),
+        Ok(false)
+    );
+    assert_eq!(untouched, PySigConfig::default());
+
+    for (key, value, error) in [
+        (
+            "maximum_signature_line_length",
+            serde_json::json!(8.5),
+            "conf key maximum_signature_line_length: non-integer number 8.5",
+        ),
+        (
+            "python_maximum_signature_line_length",
+            serde_json::json!("8"),
+            "conf key python_maximum_signature_line_length: expected integer, got \"8\"",
+        ),
+        (
+            "add_module_names",
+            serde_json::json!("yes"),
+            "conf key add_module_names: expected bool, got \"yes\"",
+        ),
+        (
+            "toc_object_entries_show_parents",
+            serde_json::json!(1),
+            "conf key toc_object_entries_show_parents: expected string, got 1",
+        ),
+    ] {
+        assert_eq!(
+            PySigConfig::default().apply_conf_key(key, &value),
+            Err(error.to_string()),
+            "{key}"
+        );
+    }
+}

@@ -13,12 +13,11 @@
 //! records in sorted docname order: a label another equation already took
 //! warns as Sphinx's parse warns, among the document's parse records.
 //!
-//! Three configuration values the domain reads are taken at Sphinx's
-//! defaults, which no oracle corpus changes and the build configuration
-//! does not carry: `math_numfig` (`True`), `math_numsep` (`'.'`) and
-//! `math_eqref_format` (`None`, which formats `({number})`)
-//! (`SP/sphinx/config.py:283-285`). So is the directive's `math_number_all`
-//! (`False`, `:282`).
+//! The three configuration values the resolution reads come from the
+//! build configuration ([`MathConfig`]): `math_numfig`, `math_numsep` and
+//! `math_eqref_format` (`SP/sphinx/config.py:283-285`); the directive's
+//! `math_number_all` (`:282`) reaches the parse
+//! ([`crate::rst::ReadConfig::math_number_all`]).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -28,7 +27,8 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::ids::make_id;
 use crate::env::BuildEnvironment;
-use crate::rst::{EquationRecord, LogLocation};
+use crate::pyformat::{self, FormatError, Value};
+use crate::rst::{EquationRecord, LogLocation, SphinxCrash};
 
 /// `env.domaindata['math']['objects']`
 /// (`SP/sphinx/domains/math.py:50-54`, `equations`): an equation's label
@@ -81,16 +81,13 @@ pub fn process_doc(
             .math
             .note_equation(docname, &record.label, record.number)
         {
-            let location = LogLocation::Node {
-                source: record.source,
-                line: record.line,
-            };
             warnings.push((
                 record.seq,
-                location.warning(
+                LogLocation::node_warning(
                     sources,
                     srcdir,
-                    docname,
+                    record.source,
+                    record.line,
                     format!(
                         "duplicate label of equation {}, other instance in {other}",
                         record.label
@@ -103,6 +100,42 @@ pub fn process_doc(
     warnings
 }
 
+/// The configuration values `MathDomain.resolve_xref` reads
+/// (`SP/sphinx/config.py:283-285`), Sphinx's defaults unless the build's
+/// configuration says otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathConfig {
+    /// `math_numfig` (default `True`): with `numfig`, an equation's number
+    /// is the one the toctree's figure numbering gave its `displaymath`.
+    pub numfig: bool,
+    /// `math_numsep` (default `'.'`): what joins that number's last part
+    /// to the rest.
+    pub numsep: String,
+    /// `math_eqref_format` (default `None`, which is `({number})`): the
+    /// reference's text, the number formatted into it.
+    pub eqref_format: Option<String>,
+}
+
+impl Default for MathConfig {
+    fn default() -> Self {
+        MathConfig {
+            numfig: true,
+            numsep: ".".to_string(),
+            eqref_format: None,
+        }
+    }
+}
+
+impl From<&crate::config::BuildConfig> for MathConfig {
+    fn from(config: &crate::config::BuildConfig) -> Self {
+        MathConfig {
+            numfig: config.math_numfig,
+            numsep: config.math_numsep.clone(),
+            eqref_format: config.math_eqref_format.clone(),
+        }
+    }
+}
+
 /// What a reference to an equation resolves to
 /// ([`resolve_xref`]).
 #[derive(Debug, PartialEq, Eq)]
@@ -112,53 +145,98 @@ pub struct EquationTarget<'e> {
     /// The id of the equation's target, `equation-<label>` as docutils'
     /// `make_id` spells it.
     pub node_id: String,
-    /// The reference's text: the equation's number in `({number})`.
+    /// The reference's text: the equation's number formatted into
+    /// `math_eqref_format`.
     pub title: String,
+    /// `Invalid math_eqref_format: KeyError(...)`, which Sphinx logs at
+    /// the reference when the format names a field other than `number`;
+    /// the text is then `(N)` with the equation's own number.
+    pub warning: Option<String>,
 }
 
 /// `MathDomain.resolve_xref` (`SP/sphinx/domains/math.py:99-134`), for
 /// both of the domain's roles, `eq` and `numref`: the equation `target`
-/// labels, if any. Its number is the document's own count when `numfig`
-/// is off, and otherwise the number the toctree's figure numbering gave
-/// its `displaymath` (`env.toc_fignumbers`), dotted, or none for a
-/// document the numbering did not reach. A numbered document without a
-/// `displaymath` table, which raises `KeyError` in Sphinx, is read as one
-/// without the equation's number (decision 13: a crash is not modelled).
+/// labels, if any. Its number is the document's own count unless both
+/// `numfig` and `math_numfig` are on, and then the number the toctree's
+/// figure numbering gave its `displaymath` (`env.toc_fignumbers`), dotted,
+/// its last dot `math_numsep`, or none for a document the numbering did
+/// not reach. The text is that number in `math_eqref_format`.
+///
+/// Two inputs crash Sphinx 9.1.0 here (decision 13), which the build
+/// fails with, located at the reference by the caller: a document the
+/// numbering reached with no `displaymath` table, whose figures, tables or
+/// code blocks it numbered while no numbered equation stands in it
+/// (`KeyError: 'displaymath'`), and a `math_eqref_format` that
+/// `str.format` raises anything but `KeyError` for
+/// ([`crate::pyformat::format`]), `TypeError` included.
 pub fn resolve_xref<'e>(
     env: &'e BuildEnvironment,
     numfig: bool,
+    math: &MathConfig,
     target: &str,
-) -> Option<EquationTarget<'e>> {
-    let (docname, number) = env.math.equations.get(target)?;
+) -> Result<Option<EquationTarget<'e>>, SphinxCrash> {
+    let Some((docname, number)) = env.math.equations.get(target) else {
+        return Ok(None);
+    };
     let node_id = make_id(&format!("equation-{target}"));
-    // `math_numfig` is on by default; `math_numsep.join(eqno.rsplit('.',
-    // 1))` with the default `'.'` leaves the dotted number as it is.
-    let eqno = if numfig {
-        env.toc_fignumbers
-            .get(docname)
-            .map(|figtypes| {
-                figtypes
-                    .get("displaymath")
-                    .and_then(|numbers| numbers.get(&node_id))
+    // `math_numsep.join(eqno.rsplit('.', 1))`.
+    let eqno = if math.numfig && numfig {
+        match env.toc_fignumbers.get(docname) {
+            Some(figtypes) => {
+                // `env.toc_fignumbers[docname]['displaymath']`.
+                let Some(numbers) = figtypes.get("displaymath") else {
+                    return Err(SphinxCrash::python(
+                        "KeyError",
+                        "'displaymath'".to_string(),
+                        LogLocation::None,
+                    ));
+                };
+                numbers
+                    .get(&node_id)
                     .map(|numbers| {
-                        numbers
+                        let eqno = numbers
                             .iter()
                             .map(u32::to_string)
                             .collect::<Vec<_>>()
-                            .join(".")
+                            .join(".");
+                        match eqno.rsplit_once('.') {
+                            Some((head, last)) => format!("{head}{}{last}", math.numsep),
+                            None => eqno,
+                        }
                     })
                     .unwrap_or_default()
-            })
-            .unwrap_or_default()
+            }
+            None => String::new(),
+        }
     } else {
         number.to_string()
     };
-    Some(EquationTarget {
+    // `(math_eqref_format or '({number})').format(number=eqno)`, and on
+    // `KeyError` a warning and `'(%d)' % number`; whatever else it raises
+    // is not caught. A value the port does not model reads as the
+    // `KeyError` it always has (T19b's divergence list).
+    let format = math
+        .eqref_format
+        .as_deref()
+        .filter(|format| !format.is_empty())
+        .unwrap_or("({number})");
+    let (title, warning) = match pyformat::format(format, &[("number", Value::Str(&eqno))]) {
+        Ok(title) => (title, None),
+        Err(FormatError::KeyError(key) | FormatError::NotModelled(key)) => (
+            format!("({number})"),
+            Some(format!(
+                "Invalid math_eqref_format: KeyError({})",
+                crate::utils::py_repr_str(&key)
+            )),
+        ),
+        Err(FormatError::TypeError(crash) | FormatError::Crash(crash)) => return Err(crash),
+    };
+    Ok(Some(EquationTarget {
         docname,
         node_id,
-        // `(math_eqref_format or '({number})').format(number=eqno)`.
-        title: format!("({eqno})"),
-    })
+        title,
+        warning,
+    }))
 }
 
 #[cfg(test)]
@@ -352,5 +430,181 @@ mod tests {
             math.equations.into_iter().collect::<Vec<_>>(),
             [("e1".to_string(), ("b".to_string(), 1))]
         );
+    }
+
+    /// The configuration values `MathDomain.resolve_xref` reads
+    /// ([`MathConfig`]): with `numfig` and `math_numfig` both on, the
+    /// toctree's number joined by `math_numsep` at its last dot, else the
+    /// document's own count; the text `math_eqref_format`, whose field
+    /// other than `number` is a `KeyError` that logs `Invalid
+    /// math_eqref_format` and falls back to `(N)`. Probed on Sphinx 9.1.0
+    /// (a numbered toctree over a document whose labelled equation is its
+    /// first, `(1)` and `(1.1)` by default).
+    #[test]
+    fn math_configuration_shapes_the_equation_reference() {
+        let mut env = BuildEnvironment::default();
+        env.math.note_equation("a", "why", 1);
+        env.toc_fignumbers.insert(
+            "a".to_string(),
+            BTreeMap::from([(
+                "displaymath".to_string(),
+                BTreeMap::from([("equation-why".to_string(), vec![1, 1])]),
+            )]),
+        );
+        let reference = |numfig: bool, math: MathConfig| {
+            let target = resolve_xref(&env, numfig, &math, "why")
+                .expect("the reference does not crash")
+                .expect("the label resolves");
+            (target.title, target.warning)
+        };
+        let config = |numfig: bool, numsep: &str, eqref_format: Option<&str>| MathConfig {
+            numfig,
+            numsep: numsep.to_string(),
+            eqref_format: eqref_format.map(str::to_string),
+        };
+        assert_eq!(
+            reference(false, MathConfig::default()),
+            ("(1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, MathConfig::default()),
+            ("(1.1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, config(true, "-", None)),
+            ("(1-1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, config(false, ".", None)),
+            ("(1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq. {number}"))),
+            ("Eq. 1".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq {foo}"))),
+            (
+                "(1)".to_string(),
+                Some("Invalid math_eqref_format: KeyError('foo')".to_string())
+            )
+        );
+        // `str.format` reads `{{` and `}}` as a literal brace.
+        assert_eq!(
+            reference(false, config(true, ".", Some("{{Eq}} {number}"))),
+            ("{Eq} 1".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("{{{number}}} and }}"))),
+            ("{1} and }".to_string(), None)
+        );
+        // The rest of a field is looked up on the number's string: an index
+        // of digits is its character, and a name in brackets the
+        // `TypeError` that `MathDomain` does not catch (decision 13, as
+        // the other exceptions but `KeyError`; probed on Sphinx 9.1.0,
+        // `a_format_field_indexes_a_string_as_python_does`,
+        // `invalid_new_style_format_exits_two`).
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq {number[0]}"))),
+            ("Eq 1".to_string(), None)
+        );
+        // Digits of any script (ARABIC-INDIC DIGIT ZERO) too, which Python
+        // reads as decimal digits (probed on Sphinx 9.1.0: `Eq 1`, no
+        // record).
+        for format in ["Eq {number[\u{660}]}", "Eq {number[0\u{660}]}"] {
+            assert_eq!(
+                reference(false, config(true, ".", Some(format))),
+                ("Eq 1".to_string(), None),
+                "{format}"
+            );
+        }
+        assert_eq!(
+            resolve_xref(
+                &env,
+                false,
+                &config(true, ".", Some("Eq {number[x]}")),
+                "why"
+            ),
+            Err(SphinxCrash::python(
+                "TypeError",
+                "string indices must be integers, not 'str'".to_string(),
+                LogLocation::None
+            ))
+        );
+        // The value of an attribute the number's string has is not
+        // modelled (`FormatError::NotModelled`, T19b's divergence list):
+        // the warning of the `KeyError` it stands in for, and `(N)`, where
+        // Sphinx 9.1.0 renders the bound method's text (probed: exit 0, no
+        // record).
+        assert_eq!(
+            reference(false, config(true, ".", Some("{number.upper}"))),
+            (
+                "(1)".to_string(),
+                Some("Invalid math_eqref_format: KeyError('number.upper')".to_string())
+            )
+        );
+    }
+
+    /// `MathDomain.resolve_any_xref` is the domain's `resolve_xref`
+    /// (`SP/sphinx/domains/math.py:136-150`), and the self-referential
+    /// retry of `intersphinx_resolve_self` calls the domain again
+    /// (`SP/sphinx/transforms/post_transforms/__init__.py:140-155`). A
+    /// `math_eqref_format` the number cannot fill warns `Invalid
+    /// math_eqref_format` at the reference, and the reference still links
+    /// to the equation as `(N)`: under `:any:` and after the retry, as
+    /// under `:eq:`. Probed on Sphinx 9.1.0 (each project's resolved
+    /// doctree and warning stream; the second loads intersphinx with
+    /// `intersphinx_resolve_self = 'self'`).
+    #[test]
+    fn an_unfillable_eqref_format_warns_and_resolves_any_and_the_retry() {
+        let math = MathConfig {
+            eqref_format: Some("{foo} {number}".to_string()),
+            ..MathConfig::default()
+        };
+        let resolve_self = crate::intersphinx::Intersphinx {
+            resolve_self: "self".to_string(),
+            ..crate::intersphinx::Intersphinx::default()
+        };
+        for (line, intersphinx) in [
+            (
+                "See :eq:`why` and :any:`why`.",
+                crate::intersphinx::Intersphinx::default(),
+            ),
+            ("Self :eq:`self:why` and :any:`self:why`.", resolve_self),
+        ] {
+            let project = merge_project(&[(
+                "index",
+                &format!("Title\n=====\n\n.. math:: x^2\n   :label: why\n\n{line}\n"),
+            )]);
+            let index = crate::transforms::test_support::resolved_with(
+                &project,
+                "index",
+                math.clone(),
+                &intersphinx,
+            );
+            let word = line.split(' ').next().unwrap_or_default();
+            assert_eq!(
+                index.body,
+                format!(
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                     Title\n        <target refid=\"equation-why\">\n        <math_block \
+                     docname=\"index\" ids=\"equation-why\" label=\"why\" no-wrap=\"0\" \
+                     nowrap=\"0\" number=\"1\" xml:space=\"preserve\">\n            x^2\n            \
+                     \n        <paragraph>\n            {word} \n            <reference \
+                     internal=\"1\" refid=\"equation-why\">\n                (1)\n             \
+                     and \n            <reference internal=\"1\" refid=\"equation-why\">\n                \
+                     (1)\n            .\n"
+                ),
+                "{line}"
+            );
+            assert_eq!(
+                index.warnings,
+                [
+                    "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('foo')",
+                    "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('foo')",
+                ],
+                "{line}"
+            );
+        }
     }
 }
