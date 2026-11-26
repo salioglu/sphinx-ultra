@@ -1280,9 +1280,14 @@ fn logical_statements(content: &str) -> Vec<(usize, String)> {
 /// The statements, trimmed, of `stmt`, a logical statement's trimmed text
 /// ([`logical_statements`]): a line of simple statements joined by `;`
 /// outside strings and brackets holds each of them, which Python runs one
-/// after another (a trailing `;` adds none). A compound statement, its
-/// one-line body included, is one statement (`if x: a = 1; b = 2`, a
-/// `case` clause: [`opens_one_line_body`]).
+/// after another (a trailing `;` adds none). Python reads a line so only
+/// when none of its statements is empty, but a trailing one, and none is a
+/// compound statement: none starts with a keyword no simple statement
+/// starts with ([`NO_SIMPLE_STATEMENT`]) or opens a one-line body
+/// ([`opens_one_line_body`]). Any other line is one statement, read as
+/// before: a compound statement with a one-line body
+/// (`if x: a = 1; b = 2`), or a line Python rejects (`x = 1;; y = 2`,
+/// `x = 1; if y: z = 2`).
 fn simple_statements(stmt: &str) -> Vec<&str> {
     let bytes = stmt.as_bytes();
     let mut semicolons = Vec::new();
@@ -1300,32 +1305,46 @@ fn simple_statements(stmt: &str) -> Vec<&str> {
         }
         i += 1;
     }
-    let Some(&first) = semicolons.first() else {
-        return vec![stmt];
-    };
-    if compound_header(stmt).is_some() || opens_one_line_body(&stmt[..first]) {
+    if semicolons.is_empty() {
         return vec![stmt];
     }
     let mut start = 0;
     let mut parts = Vec::new();
     for end in semicolons.into_iter().chain([stmt.len()]) {
-        let part = stmt[start..end].trim();
-        if !part.is_empty() {
-            parts.push(part);
-        }
+        parts.push(stmt[start..end].trim());
         start = end + 1;
     }
-    parts
+    if parts.last() == Some(&"") {
+        parts.pop();
+    }
+    let simple = parts.iter().all(|part| {
+        !part.is_empty()
+            && !NO_SIMPLE_STATEMENT.contains(&leading_word(part).0)
+            && !opens_one_line_body(part)
+    });
+    match simple {
+        true => parts,
+        false => vec![stmt],
+    }
 }
 
-/// Whether `head`, a logical statement's text before its first `;`, is a
-/// compound statement's header and the start of its one-line body: its
-/// first colon outside strings and brackets (no `:=`) ends neither one
-/// target, as an annotated assignment's does ([`reads_as_one_target`]),
-/// nor a lambda's parameters. That sees a `case` clause, which
-/// [`compound_header`] does not (`case 'a': x = 1; y = 2`).
-fn opens_one_line_body(head: &str) -> bool {
-    let bytes = head.as_bytes();
+/// Python 3.12's keywords that start no simple statement: a compound
+/// statement's (`if`, `def`, `async def`, ...) or an operator's (`and`,
+/// `in`, ...). CPython 3.12.2 parses none of them after a `;` (scratch
+/// `t19b1/fix4/out/keywords-after-semicolon.out`).
+const NO_SIMPLE_STATEMENT: [&str; 17] = [
+    "and", "as", "async", "class", "def", "elif", "else", "except", "finally", "for", "if", "in",
+    "is", "or", "try", "while", "with",
+];
+
+/// Whether `text`, a statement's text, is a compound statement's header
+/// and the start of its one-line body: its first colon outside strings
+/// and brackets (no `:=`) ends neither one target, as an annotated
+/// assignment's does ([`reads_as_one_target`]), nor a lambda's
+/// parameters. That sees a `case` clause, whose keyword is a name's too
+/// (`case 'a': x = 1; y = 2`).
+fn opens_one_line_body(text: &str) -> bool {
+    let bytes = text.as_bytes();
     let (mut depth, mut i) = (0i32, 0usize);
     while i < bytes.len() {
         match bytes[i] {
@@ -1336,7 +1355,7 @@ fn opens_one_line_body(head: &str) -> bool {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth -= 1,
             b':' if depth == 0 && bytes.get(i + 1) != Some(&b'=') => {
-                let before = &head[..i];
+                let before = &text[..i];
                 return !reads_as_one_target(before) && !has_lambda(before);
             }
             _ => {}
@@ -5723,7 +5742,7 @@ e = 'esc\n'
         );
         const PROLOG: Option<&str> = Some("\".. |a| replace:: A\\n\"");
         const BLOCK: &str = "an assignment inside a block";
-        let rows: [Row; 15] = [
+        let rows: [Row; 18] = [
             (
                 "semi_import_prolog",
                 "extensions = []\nimport os; rst_prolog = '.. |a| replace:: A\\n'\n",
@@ -5866,6 +5885,36 @@ e = 'esc\n'
                         "unsupported statement dropped: case 'a': rst_prolog = 'b'; y = 1",
                     ),
                 ],
+            ),
+            // A line Python rejects (no row Python runs: a `SyntaxError`,
+            // which Sphinx stops on, exit 2) stays one statement, read as
+            // before, so its key fails closed as it did (scratch
+            // `t19b1/fix4/specs/semi_empty.json`, `semi_compound_after.json`,
+            // `semi_keyword_after.json`): an empty statement, a compound
+            // statement after a `;`, a keyword no statement starts with.
+            (
+                "an empty statement between `;`s",
+                "x = 1;; rst_prolog = 'a'\n",
+                &[("x", None)],
+                Some(("rst_prolog", 1, "an assignment it cannot evaluate")),
+                &[(1, "unsupported statement dropped: x = 1;; rst_prolog = 'a'")],
+            ),
+            (
+                "a compound statement after a `;`",
+                "rst_prolog = 'a'; if rst_prolog: y = 1\n",
+                &[("rst_prolog", None), ("y", None)],
+                Some(("rst_prolog", 1, "an assignment it cannot evaluate")),
+                &[(
+                    1,
+                    "unsupported statement dropped: rst_prolog = 'a'; if rst_prolog: y = 1",
+                )],
+            ),
+            (
+                "a keyword no statement starts with, after a `;`",
+                "rst_prolog = 'a'; if x\n",
+                &[("rst_prolog", None)],
+                Some(("rst_prolog", 1, "trailing expression")),
+                &[],
             ),
         ];
         for (label, content, names, unevaluable, notices) in rows {
