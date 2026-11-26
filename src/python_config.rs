@@ -472,24 +472,28 @@ impl PythonConfigParser {
     /// does not hold, unless the body declares the name `global`
     /// ([`binds_module_name`]).
     fn parse_statements(&mut self, content: &str) -> Result<()> {
-        let statements = logical_statements(content);
-        // The names `conf.py` binds anywhere, which tell a method named
-        // `setattr` from the builtin ([`setattr_keys`]).
-        let names = ConfNames::of(&statements);
+        let lines = logical_statements(content);
+        // Each statement of each logical line, at the line's number and
+        // indentation: a line of simple statements joined by `;` holds as
+        // many, each read on its own ([`simple_statements`]).
+        let statements = lines.iter().flat_map(|(line, raw)| {
+            let indent = indentation(raw);
+            simple_statements(raw.trim())
+                .into_iter()
+                .map(move |stmt| (*line, indent, stmt))
+        });
         // The `def` and `class` statements whose bodies the statements are
         // in, innermost last.
         let mut scopes: Vec<Scope> = Vec::new();
-        for (line, raw) in &statements {
-            let (line, stmt) = (*line, raw.trim());
+        for (line, indent, stmt) in statements {
             if stmt.is_empty() {
                 continue;
             }
-            let indent = indentation(raw);
             while scopes.last().is_some_and(|scope| scope.indent >= indent) {
                 scopes.pop();
             }
 
-            let (found, others) = bindings(stmt, indent, &mut scopes, &names);
+            let (found, others) = bindings(stmt, indent, &mut scopes);
             if !found.is_empty() {
                 for (key, binding) in found {
                     self.bind(line, key, binding);
@@ -1169,7 +1173,8 @@ fn snippet(s: &str) -> String {
 /// Split Python source into logical statements: physical lines joined while
 /// brackets are open, a string (incl. triple-quoted) is unterminated, or a
 /// trailing backslash continues the line. Comments outside strings are
-/// stripped. Yields `(1-based start line, statement text)`.
+/// stripped. Yields `(1-based start line, statement text)`; a line of
+/// simple statements joined by `;` is one text ([`simple_statements`]).
 fn logical_statements(content: &str) -> Vec<(usize, String)> {
     let chars: Vec<char> = content.chars().collect();
     let mut statements = Vec::new();
@@ -1270,6 +1275,75 @@ fn logical_statements(content: &str) -> Vec<(usize, String)> {
     }
 
     statements
+}
+
+/// The statements, trimmed, of `stmt`, a logical statement's trimmed text
+/// ([`logical_statements`]): a line of simple statements joined by `;`
+/// outside strings and brackets holds each of them, which Python runs one
+/// after another (a trailing `;` adds none). A compound statement, its
+/// one-line body included, is one statement (`if x: a = 1; b = 2`, a
+/// `case` clause: [`opens_one_line_body`]).
+fn simple_statements(stmt: &str) -> Vec<&str> {
+    let bytes = stmt.as_bytes();
+    let mut semicolons = Vec::new();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => semicolons.push(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    let Some(&first) = semicolons.first() else {
+        return vec![stmt];
+    };
+    if compound_header(stmt).is_some() || opens_one_line_body(&stmt[..first]) {
+        return vec![stmt];
+    }
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for end in semicolons.into_iter().chain([stmt.len()]) {
+        let part = stmt[start..end].trim();
+        if !part.is_empty() {
+            parts.push(part);
+        }
+        start = end + 1;
+    }
+    parts
+}
+
+/// Whether `head`, a logical statement's text before its first `;`, is a
+/// compound statement's header and the start of its one-line body: its
+/// first colon outside strings and brackets (no `:=`) ends neither one
+/// target, as an annotated assignment's does ([`reads_as_one_target`]),
+/// nor a lambda's parameters. That sees a `case` clause, which
+/// [`compound_header`] does not (`case 'a': x = 1; y = 2`).
+fn opens_one_line_body(head: &str) -> bool {
+    let bytes = head.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b':' if depth == 0 && bytes.get(i + 1) != Some(&b'=') => {
+                let before = &head[..i];
+                return !reads_as_one_target(before) && !has_lambda(before);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Python 3.12's keywords (`keyword.kwlist`), which no assignment binds:
@@ -1491,113 +1565,12 @@ struct Scope {
     function: bool,
     /// The names the scope's `global` statements name.
     globals: Vec<String>,
-    /// A `def`'s parameters ([`def_parameters`]): names its body, and the
-    /// scopes in it, bind to what the function's caller passes.
-    parameters: Vec<String>,
 }
 
 impl Scope {
     /// Whether a `global` statement in the scope names `name`.
     fn declares_global(&self, name: &str) -> bool {
         self.globals.iter().any(|global| global == name)
-    }
-}
-
-/// The names of the parameters of the `def` whose header's text is `text`
-/// (`name(<parameters>) -> <annotation>`, type parameters `name[T](...)`
-/// before them): each parameter's name, without its `*` or `**`, its
-/// annotation and its default.
-fn def_parameters(text: &str) -> Vec<String> {
-    let bytes = text.as_bytes();
-    let (mut depth, mut i) = (0i32, 0usize);
-    while i < bytes.len() {
-        match bytes[i] {
-            quote @ (b'\'' | b'"') => {
-                i = skip_string(bytes, i, quote);
-                continue;
-            }
-            b'(' if depth == 0 => {
-                return call_arguments(text, i)
-                    .into_iter()
-                    .map(|parameter| leading_word(parameter.trim_start_matches('*').trim_start()).0)
-                    .filter(|name| !name.is_empty())
-                    .map(str::to_string)
-                    .collect();
-            }
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            _ => {}
-        }
-        i += 1;
-    }
-    Vec::new()
-}
-
-/// The names `conf.py` binds anywhere, in any scope, which tell a method
-/// named `setattr` from the builtin ([`setattr_keys`]): those an import
-/// binds (`import x`, `import m as x`, `from m import x`,
-/// `from m import y as x`; a star import binds none this reader can
-/// name), and those any other binding this reader sees binds: an
-/// assignment's targets (augmented and annotated ones too), a `for`'s, a
-/// `with`'s or an `except`'s target, an assignment expression's, a `def`'s
-/// or a `class`'s name.
-struct ConfNames {
-    imported: Vec<String>,
-    bound: Vec<String>,
-}
-
-impl ConfNames {
-    /// The names `statements`, `conf.py`'s logical statements
-    /// ([`logical_statements`]), bind.
-    fn of(statements: &[(usize, String)]) -> Self {
-        let (mut imported, mut bound) = (Vec::new(), Vec::new());
-        let mut bind = |names: Vec<&str>| {
-            let names = names.into_iter().filter(|name| !name.is_empty());
-            bound.extend(names.map(str::to_string));
-        };
-        for (_, raw) in statements {
-            let stmt = raw.trim();
-            // A compound statement's header binds its targets and its name;
-            // its one-line body is a simple statement.
-            let simple = match compound_header(stmt) {
-                Some(header) => {
-                    let targets = match header.keyword {
-                        "for" => vec![for_target(header.text)],
-                        "with" | "except" => as_targets(header.text),
-                        _ => Vec::new(),
-                    };
-                    for target in targets {
-                        bind(target_bindings(target).names);
-                    }
-                    if matches!(header.keyword, "def" | "class") {
-                        bind(vec![leading_word(header.text).0]);
-                    }
-                    bind(walrus_targets(header.text));
-                    header.body
-                }
-                None => stmt,
-            };
-            match imported_names(simple) {
-                Some(names) => imported.extend(names.into_iter().map(str::to_string)),
-                None => {
-                    for target in assignment(simple).targets {
-                        bind(target_bindings(target).names);
-                    }
-                    bind(walrus_targets(simple));
-                }
-            }
-        }
-        ConfNames { imported, bound }
-    }
-
-    /// Whether `name`, the name an object leads with ([`leading_name`]),
-    /// holds an object of `conf.py`'s own, whose `setattr` is a method of
-    /// it and no call of the builtin: a name `conf.py` binds somewhere, or
-    /// a parameter of a `def` among `scopes`, and one no import binds.
-    fn own(&self, name: &str, scopes: &[Scope]) -> bool {
-        let named = |names: &[String]| names.iter().any(|bound| bound == name);
-        !named(&self.imported)
-            && (named(&self.bound) || scopes.iter().any(|scope| named(&scope.parameters)))
     }
 }
 
@@ -1696,8 +1669,7 @@ enum Bound<'s> {
 /// `scopes`, which a `def` or `class` header opens one in and a `global`
 /// statement declares names in; and whether the statement binds anything
 /// else, which this reader drops ([`statement_bindings`]). A statement
-/// that binds neither key returns no binding. `names` are the names
-/// `conf.py` binds anywhere ([`ConfNames`]).
+/// that binds neither key returns no binding.
 ///
 /// The bindings it sees are an assignment's targets (`=`, `op=`, an
 /// annotated, a tuple, starred or chained target; a name, an attribute, or
@@ -1705,9 +1677,7 @@ enum Bound<'s> {
 /// an annotation or a lambda's parameter), `del`'s, a `for`'s, a `with`'s
 /// or an `except`'s target, an assignment expression, an import's names, a
 /// `def`'s or a `class`'s name, and a `setattr` call whose name is a string
-/// literal: the builtin, by its name or as an attribute of an object this
-/// reader cannot tell from its module (`builtins.setattr`), not a method of
-/// an object of `conf.py`'s own ([`setattr_keys`]). Each target that binds
+/// literal, bare or after a `.` ([`setattr_keys`]). Each target that binds
 /// a key is a binding of its own: a statement can bind the module's name
 /// and an attribute of that name both. A star import, `exec(...)`, and a
 /// key that a subscript or a `setattr` call names otherwise than by a
@@ -1716,29 +1686,23 @@ fn bindings<'s>(
     stmt: &'s str,
     indent: usize,
     scopes: &mut Vec<Scope>,
-    names: &ConfNames,
 ) -> (Vec<(&'static str, Binding<'s>)>, bool) {
     let in_block = indent > 0;
     let Some(header) = compound_header(stmt) else {
-        return simple_bindings(stmt, scopes, in_block, names);
+        return simple_bindings(stmt, scopes, in_block);
     };
     // A header binds in the scope around it.
-    let (bound, mut others) = header.bindings(&|name| names.own(name, scopes));
+    let (bound, mut others) = header.bindings();
     let mut found: Vec<(&'static str, Binding<'s>)> = bound
         .into_iter()
         .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
         .collect();
     let opens_scope = matches!(header.keyword, "def" | "class");
     if opens_scope {
-        let function = header.keyword == "def";
         scopes.push(Scope {
             indent,
-            function,
+            function: header.keyword == "def",
             globals: Vec::new(),
-            parameters: match function {
-                true => def_parameters(header.text),
-                false => Vec::new(),
-            },
         });
     }
     if !header.body.is_empty() {
@@ -1747,7 +1711,7 @@ fn bindings<'s>(
         // header's, of the same key too, as each target's does
         // ([`PythonConfigParser::opaque`] keeps a key's first of each
         // kind).
-        let (body, body_others) = simple_bindings(header.body, scopes, true, names);
+        let (body, body_others) = simple_bindings(header.body, scopes, true);
         found.extend(body);
         others |= body_others;
         if opens_scope {
@@ -1764,11 +1728,10 @@ fn simple_bindings<'s>(
     stmt: &'s str,
     scopes: &mut [Scope],
     in_block: bool,
-    names: &ConfNames,
 ) -> (Vec<(&'static str, Binding<'s>)>, bool) {
-    if let Some(globals) = keyword_rest(stmt, "global") {
+    if let Some(names) = keyword_rest(stmt, "global") {
         if let Some(scope) = scopes.last_mut() {
-            for name in globals.split(',').map(str::trim) {
+            for name in names.split(',').map(str::trim) {
                 if !scope.declares_global(name) {
                     scope.globals.push(name.to_string());
                 }
@@ -1776,7 +1739,7 @@ fn simple_bindings<'s>(
         }
         return (Vec::new(), false);
     }
-    let (bound, others) = statement_bindings(stmt, &|name| names.own(name, scopes));
+    let (bound, others) = statement_bindings(stmt);
     let found = bound
         .into_iter()
         .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
@@ -1866,15 +1829,11 @@ fn resolve<'s>(
 /// The bindings of the keys of [`MUST_EVALUATE`] that the simple statement
 /// `stmt` makes, as the statement alone tells them: an import's names,
 /// `del`'s targets, an assignment's targets, an assignment expression's, a
-/// `setattr` call's (`own`: [`setattr_keys`]). Also whether it binds
-/// anything else (another name, an attribute of another name, an item a
-/// string literal naming a key does not subscript), which this reader
-/// drops; an import's other names aside, as this reader drops any import
-/// unwarned.
-fn statement_bindings<'s>(
-    stmt: &'s str,
-    own: &dyn Fn(&str) -> bool,
-) -> (Vec<(&'static str, Bound<'s>)>, bool) {
+/// `setattr` call's. Also whether it binds anything else (another name,
+/// an attribute of another name, an item a string literal naming a key
+/// does not subscript), which this reader drops; an import's other names
+/// aside, as this reader drops any import unwarned.
+fn statement_bindings(stmt: &str) -> (Vec<(&'static str, Bound<'_>)>, bool) {
     let mut found: Vec<(&'static str, Bound<'_>)> = Vec::new();
     if let Some(names) = imported_names(stmt) {
         for key in MUST_EVALUATE {
@@ -1946,7 +1905,7 @@ fn statement_bindings<'s>(
     for target in &targets {
         found.extend(target.item_bindings(false, true));
     }
-    for key in setattr_keys(stmt, own) {
+    for key in setattr_keys(stmt) {
         let reason = "a setattr call with that name";
         found.push((key, Bound::Attribute { reason }));
     }
@@ -2028,39 +1987,24 @@ fn item_binding<'s>(
 /// `t17b-fix3/specs/setattr_setup*`), and this reader cannot tell another
 /// object from Sphinx's configuration.
 ///
-/// `<object>.setattr(...)` is a method of `<object>`, no call of the
-/// builtin, when the name `<object>` leads with ([`leading_name`]) holds
-/// an object of `conf.py`'s own (`own`, [`ConfNames::own`]): `k.setattr`
-/// after `k = K()` (scratch `t17b-rr3/specs/dot_setattr*`), and
-/// `k.builtins.setattr` (`t19b1/fix2/specs/builtins_attr_setattr.json`).
-/// Any other object this reader cannot tell from the module `builtins`,
-/// so its `setattr` is the builtin: `builtins.setattr`, spaced or not, an
-/// alias of the module, `(builtins).setattr`,
-/// `sys.modules['builtins'].setattr`, a name `conf.py` never binds
-/// (`t19b1-review/specs/builtins_setattr.json`,
-/// `t19b1-review/specs2/builtins_setattr_bytes.json`;
-/// `t19b1/fix2/specs/builtins_*`; `t19b1/fix3/specs/sys_modules_setattr*`,
-/// `never_bound_setattr.json`). The builtin reached otherwise, through
-/// `getattr(builtins, 'setattr')` or a name an assignment binds to the
-/// module (`b = builtins`), is not seen.
-fn setattr_keys(text: &str, own: &dyn Fn(&str) -> bool) -> Vec<&'static str> {
+/// A `setattr` after a `.` is read as the builtin too (ledger "Ruling
+/// (T19b1 fix round 4, revert item 5)"): this reader cannot tell a method
+/// of that name from the builtin reached through its module, to which an
+/// import, an assignment or a parameter can give any name
+/// (`t19b1/fix2/specs/builtins_*`, `t19b1/fix3/specs/`,
+/// `t19b1-rereview-r3/specs/`). A method of an object of `conf.py`'s own
+/// fails closed where Sphinx 9.1.0 reads the later literal
+/// (`t17b-rr3/specs/dot_setattr*`). `getattr(builtins, 'setattr')` is not
+/// seen.
+fn setattr_keys(text: &str) -> Vec<&'static str> {
     let bytes = text.as_bytes();
     let mut keys = Vec::new();
-    // Where each bracket still open opens, and each closed one's closing
-    // and opening index ([`leading_name`]).
-    let (mut open, mut pairs) = (Vec::new(), Vec::new());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             quote @ (b'\'' | b'"') => {
                 i = skip_string(bytes, i, quote);
                 continue;
-            }
-            b'(' | b'[' | b'{' => open.push(i),
-            b')' | b']' | b'}' => {
-                if let Some(at) = open.pop() {
-                    pairs.push((i, at));
-                }
             }
             byte if is_identifier_byte(byte) => {
                 let start = i;
@@ -2070,16 +2014,9 @@ fn setattr_keys(text: &str, own: &dyn Fn(&str) -> bool) -> Vec<&'static str> {
                 if &text[start..i] != "setattr" {
                     continue;
                 }
-                let method = text[..start]
-                    .trim_end()
-                    .strip_suffix('.')
-                    .is_some_and(|object| leading_name(object, &pairs).is_some_and(own));
-                if method {
-                    continue;
-                }
-                let call = i + text[i..].len() - text[i..].trim_start().len();
-                if bytes.get(call) == Some(&b'(') {
-                    let arguments = call_arguments(text, call);
+                let open = i + text[i..].len() - text[i..].trim_start().len();
+                if bytes.get(open) == Some(&b'(') {
+                    let arguments = call_arguments(text, open);
                     if let Some(key) = arguments.get(1).and_then(|name| key_named(name)) {
                         keys.push(key);
                     }
@@ -2091,62 +2028,6 @@ fn setattr_keys(text: &str, own: &dyn Fn(&str) -> bool) -> Vec<&'static str> {
         i += 1;
     }
     keys
-}
-
-/// The name that `object`, the text before an attribute's `.`, leads
-/// with: its first identifier, after any opening parentheses. Read back
-/// from its end over attributes (`.name`), calls and subscripts to the
-/// name or the parenthesized expression they follow; `pairs` holds each
-/// closed bracket's closing and opening index (in `object`, a prefix of
-/// the text they index). `None` when the object starts with no name: a
-/// string, a list, a dict or a set.
-fn leading_name<'t>(object: &'t str, pairs: &[(usize, usize)]) -> Option<&'t str> {
-    let bytes = object.as_bytes();
-    // Where the identifier `text` ends with starts.
-    let word_start = |text: &str| {
-        text.bytes()
-            .rposition(|byte| !is_identifier_byte(byte))
-            .map_or(0, |at| at + 1)
-    };
-    let mut end = object.trim_end().len();
-    loop {
-        match *bytes[..end].last()? {
-            b')' | b']' => {
-                let (_, open) = *pairs.iter().find(|(close, _)| *close == end - 1)?;
-                let before = object[..open].trim_end();
-                let word = &before[word_start(before)..];
-                // A keyword before a bracket opens no call or subscript
-                // (`not (x)`), but a keyword that is a value does (`None`).
-                let keyword =
-                    PYTHON_KEYWORDS.contains(&word) && !matches!(word, "False" | "None" | "True");
-                let trailer = match before.bytes().last() {
-                    Some(b'\'' | b'"') => return None,
-                    Some(b')' | b']' | b'}') => true,
-                    Some(_) => !word.is_empty() && !keyword,
-                    None => false,
-                };
-                if trailer {
-                    // A call or a subscript of what precedes it.
-                    end = before.len();
-                    continue;
-                }
-                // A parenthesized expression, or a list.
-                let inner =
-                    object[open..].trim_start_matches(|c: char| c == '(' || c.is_whitespace());
-                let name = leading_word(inner).0;
-                return (bytes[open] == b'(' && !name.is_empty()).then_some(name);
-            }
-            byte if is_identifier_byte(byte) => {
-                let start = word_start(&object[..end]);
-                match object[..start].trim_end().strip_suffix('.') {
-                    // An attribute of what precedes it.
-                    Some(before) => end = before.trim_end().len(),
-                    None => return Some(&object[start..end]),
-                }
-            }
-            _ => return None,
-        }
-    }
 }
 
 /// The arguments, trimmed, of the call whose `(` is at `open` in `text`:
@@ -2233,9 +2114,9 @@ impl<'s> Header<'s> {
     /// `with`'s or an `except`'s `as` target (a name, an attribute or an
     /// item, as an assignment's, [`statement_bindings`]), a `def`'s or a
     /// `class`'s name, an assignment expression or a `setattr` call in its
-    /// expressions (`own`: [`setattr_keys`]); and whether it binds anything
-    /// else, a `def`'s or a `class`'s name that is no key among them.
-    fn bindings(&self, own: &dyn Fn(&str) -> bool) -> (Vec<(&'static str, Bound<'s>)>, bool) {
+    /// expressions; and whether it binds anything else, a `def`'s or a
+    /// `class`'s name that is no key among them.
+    fn bindings(&self) -> (Vec<(&'static str, Bound<'s>)>, bool) {
         let mut found: Vec<(&'static str, Bound<'s>)> = Vec::new();
         let mut others = false;
         let mut targets = |targets: TargetBindings<'_>, reason: &'static str, definite: bool| {
@@ -2294,7 +2175,7 @@ impl<'s> Header<'s> {
                 found.push((key, Bound::Other { reason, definite }));
             }
         }
-        for key in setattr_keys(self.text, own) {
+        for key in setattr_keys(self.text) {
             let reason = "a setattr call with that name";
             found.push((key, Bound::Attribute { reason }));
         }
@@ -5182,26 +5063,17 @@ e = 'esc\n'
     /// method's included, runs when something calls it, after every
     /// top-level statement.
     ///
-    /// `<object>.setattr(...)` is a method of an object of `conf.py`'s own,
-    /// no call of the builtin, when the name the object leads with is one
-    /// `conf.py` binds somewhere, before the call or after it, or a
-    /// parameter of an enclosing `def`, and no import binds it; Sphinx
-    /// reads the later literal over each such call (scratch
-    /// `t17b-rr3/specs/dot_setattr*`; `t19b1/specs/dot_setattr_spaced.json`;
-    /// `t19b1/fix2/specs/builtins_attr_setattr.json`, an attribute named
-    /// `builtins` and a longer name ending in it;
-    /// `t19b1/fix3/specs/later_assign_setattr.json`, `chain_setattr.json`,
-    /// `param_setattr.json`, `param_block_setattr.json`). Any other object
-    /// this reader cannot tell from the module `builtins`, whose `setattr`
-    /// Sphinx reads over any override
-    /// (`t19b1-review/specs/builtins_setattr.json`;
-    /// `t19b1/fix2/specs/builtins_setattr_D.json`,
-    /// `builtins_setattr_spaced.json`, `builtins_alias_setattr.json`,
-    /// `builtins_paren_setattr.json`;
-    /// `t19b1/fix3/specs/sys_modules_setattr.json`,
-    /// `import_too_setattr.json`), or that has no value when the call runs,
-    /// which crashes Sphinx (`t19b1/fix3/specs/never_bound_setattr.json`,
-    /// `other_param_setattr.json`).
+    /// Every `setattr(...)` call naming a key, bare or after any `.`, is a
+    /// call of the builtin here ([`setattr_keys`]; ledger "Ruling (T19b1
+    /// fix round 4, revert item 5)"): the builtin reached through its
+    /// module, under any name an import, an assignment or a parameter gives
+    /// the module, is read over any override, and with a `bytes` value
+    /// crashes Sphinx (`t19b1-review/specs/builtins_setattr*.json`,
+    /// `t19b1/fix2/specs/builtins_*`, `t19b1/fix3/specs/sys_modules_*`,
+    /// `import_too_*`, `assign_module_*`; `t19b1-rereview-r3/specs/`). A
+    /// method named `setattr` of an object of `conf.py`'s own fails closed
+    /// with it, a documented divergence: Sphinx 9.1.0 calls the method and
+    /// reads the later literal (the rows marked below).
     #[test]
     fn items_and_setattr_calls_bind_as_sphinx_reads_them() {
         /// The bindings left as `(key, line, reason, overridable)`, or what
@@ -5300,17 +5172,23 @@ e = 'esc\n'
                  setattr(config, 'rst_epilog', 'b'))\n",
                 Err(&[("rst_epilog", 2, SETATTR, false)]),
             ),
+            // T17b-41's input fails closed with BASE's configuration error
+            // (ledger "Ruling (T19b1 fix round 4, revert item 5)"), a
+            // documented divergence: Sphinx 9.1.0 calls the method and reads
+            // the later literal, exit 0, or the `-D rst_prolog=...` override
+            // (scratch `t17b-rr3/specs/dot_setattr.json`,
+            // `dot_setattr_D.json`; `t19b1/specs/dot_setattr_spaced.json`).
             (
                 "dot_setattr",
                 "class K:\n    def setattr(self, *a): pass\nk = K()\n\
                  k.setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 4, SETATTR, false)]),
             ),
             (
                 "a method named setattr, spaced",
                 "class K:\n    def setattr(self, *a): pass\nk = K()\n\
                  k . setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 4, SETATTR, false)]),
             ),
             (
                 "builtins_setattr",
@@ -5324,12 +5202,14 @@ e = 'esc\n'
                  builtins . setattr(app.config, 'rst_prolog', 'b')\n",
                 Err(&[("rst_prolog", 3, SETATTR, false)]),
             ),
+            // The same divergence: Sphinx reads the later literal, exit 0
+            // (`t19b1/fix2/specs/builtins_attr_setattr.json`).
             (
                 "a method of an attribute named builtins, or of a longer name",
                 "class K:\n    def setattr(self, *a): pass\nk = K()\nk.builtins = k\n\
                  mybuiltins = k\nk.builtins.setattr(k, 'rst_prolog', 1)\n\
                  mybuiltins.setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 6, SETATTR, false)]),
             ),
             (
                 "builtins_alias_setattr",
@@ -5365,29 +5245,35 @@ e = 'esc\n'
                 "def f(k): pass\ndef setup(app):\n    k.setattr(app.config, 'rst_prolog', 'b')\n",
                 Err(&[("rst_prolog", 3, SETATTR, false)]),
             ),
+            // The same divergence for a name an assignment binds after the
+            // call, a chain from such a name, and a parameter of an
+            // enclosing `def`: Sphinx reads the later literal, exit 0
+            // (`t19b1/fix3/specs/later_assign_setattr.json`,
+            // `chain_setattr.json`, `param_setattr.json`,
+            // `param_block_setattr.json`).
             (
                 "a method of a name an assignment binds after the call",
                 "class K:\n    def setattr(self, *a): pass\ndef setup(app):\n    \
                  k.setattr(app.config, 'rst_prolog', 'b')\nk = K()\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 4, SETATTR, false)]),
             ),
             (
                 "a method at the end of a chain from a name an assignment binds",
                 "class K:\n    def setattr(self, *a): pass\n    def get(self): return self\n\
                  k = K()\nk.items = [k]\nk.items[0].get().setattr(k, 'rst_prolog', 1)\n\
                  (k.items[0]).setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 6, SETATTR, false)]),
             ),
             (
                 "a method of a parameter of an enclosing def",
                 "def f(self): self.setattr(self, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 1, SETATTR, false)]),
             ),
             (
                 "a method of a parameter of an enclosing def, in a block",
                 "class K:\n    def setattr(self, *a): pass\n    def m(self):\n        \
                  self.setattr(self, 'rst_prolog', 1)\nK().m()\nrst_prolog = 'a'\n",
-                Ok(Some("a")),
+                Err(&[("rst_prolog", 4, SETATTR, false)]),
             ),
             (
                 "item_other_key, and setattr of another key or by a name",
@@ -5807,6 +5693,197 @@ e = 'esc\n'
                 .map(|warning| warning.message.as_str())
                 .collect();
             assert_eq!(notices, Vec::from_iter(notice), "{content}");
+        }
+    }
+
+    /// A line of simple statements joined by `;` holds as many statements,
+    /// each read on its own at the line's number (ledger "Ruling (T19b1
+    /// fix round 4, `;`-joined statements)"): an import is skipped, an
+    /// assignment binds its name or gets its notice, a `global` statement
+    /// declares its names for the statements after it, and a trailing `;`
+    /// adds nothing. Sphinx 9.1.0 reads the key after an import or an
+    /// assignment, and before an import (scratch
+    /// `t19b1c/semi_import_prolog.json`, `semi_generic.json`,
+    /// `semi_assign_prolog.json`, `semi_prolog_then_import.json`;
+    /// `t19b1/fix4/specs/semi_*`). A `;` in a string splits nothing, and a
+    /// compound statement's one-line body, a `case` clause's among them,
+    /// stays one statement, read as before.
+    #[test]
+    fn semicolon_joined_statements_are_read_one_by_one() {
+        /// A label, a `conf.py` text, what the namespace holds for some
+        /// names (as JSON), the binding of a key the reader cannot evaluate
+        /// as `(key, line, reason)`, and the reader's notices as
+        /// `(line, message)`.
+        type Row = (
+            &'static str,
+            &'static str,
+            &'static [(&'static str, Option<&'static str>)],
+            Option<(&'static str, usize, &'static str)>,
+            &'static [(usize, &'static str)],
+        );
+        const PROLOG: Option<&str> = Some("\".. |a| replace:: A\\n\"");
+        const BLOCK: &str = "an assignment inside a block";
+        let rows: [Row; 15] = [
+            (
+                "semi_import_prolog",
+                "extensions = []\nimport os; rst_prolog = '.. |a| replace:: A\\n'\n",
+                &[("rst_prolog", PROLOG)],
+                None,
+                &[],
+            ),
+            (
+                "semi_generic",
+                "extensions = []\nimport os; html_logo = 'missing.png'\n",
+                &[("html_logo", Some("\"missing.png\""))],
+                None,
+                &[],
+            ),
+            (
+                "semi_assign_prolog",
+                "extensions = []\nx = 1; rst_prolog = '.. |a| replace:: A\\n'\n",
+                &[("x", Some("1")), ("rst_prolog", PROLOG)],
+                None,
+                &[],
+            ),
+            (
+                "semi_prolog_then_import",
+                "extensions = []\nrst_prolog = '.. |a| replace:: A\\n'; import os\n",
+                &[("rst_prolog", PROLOG)],
+                None,
+                &[],
+            ),
+            (
+                "a `;` in a string",
+                "rst_prolog = 'a; b'\n",
+                &[("rst_prolog", Some("\"a; b\""))],
+                None,
+                &[],
+            ),
+            (
+                "a trailing `;`",
+                "rst_prolog = 'a';\n",
+                &[("rst_prolog", Some("\"a\""))],
+                None,
+                &[],
+            ),
+            // A colon before the `;` that opens no one-line body: a dict's,
+            // an annotation's, a lambda's.
+            (
+                "a dict before a `;`",
+                "html_context = {'a': 1}; html_logo = 'missing.png'\n",
+                &[
+                    ("html_context", Some("{\"a\":1}")),
+                    ("html_logo", Some("\"missing.png\"")),
+                ],
+                None,
+                &[],
+            ),
+            (
+                "an annotated assignment before a `;`",
+                "html_logo: str = 'missing.png'; x = 1\n",
+                &[("html_logo", Some("\"missing.png\"")), ("x", Some("1"))],
+                None,
+                &[],
+            ),
+            (
+                "a lambda before a `;`",
+                "f = lambda: 1; html_logo = 'missing.png'\n",
+                &[("f", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'f' dropped (unsupported expression): lambda: 1",
+                )],
+            ),
+            (
+                "every statement of the line is read or noticed",
+                "x = 1; print(x); html_title = f'{x}'\n",
+                &[("x", Some("1")), ("html_title", None)],
+                None,
+                &[
+                    (1, "unsupported statement dropped: print(x)"),
+                    (
+                        1,
+                        "unsupported value for 'html_title' dropped (unsupported expression): \
+                         f'{x}'",
+                    ),
+                ],
+            ),
+            (
+                "a global statement before an assignment",
+                "def setup(app):\n    global html_logo; html_logo = 'missing.png'\n",
+                &[("html_logo", Some("\"missing.png\""))],
+                None,
+                &[
+                    (1, "unsupported statement dropped: def setup(app):"),
+                    (2, "unsupported statement dropped: global html_logo"),
+                ],
+            ),
+            // A compound statement's one-line body stays one statement, read
+            // as before: a key it binds fails closed, its other bindings are
+            // dropped with the notice. Sphinx runs the body (scratch
+            // `t19b1/fix4/specs/semi_if_oneline.json`, `semi_def_oneline.json`,
+            // `semi_class_oneline.json`, `semi_case_oneline.json`).
+            (
+                "a one-line if body",
+                "x = 1\nif x: rst_prolog = 'a'; y = 2\n",
+                &[("x", Some("1")), ("y", None)],
+                Some(("rst_prolog", 2, BLOCK)),
+                &[(
+                    2,
+                    "unsupported statement dropped: if x: rst_prolog = 'a'; y = 2",
+                )],
+            ),
+            (
+                "a one-line def body",
+                "rst_prolog = 'a'\ndef f(): rst_prolog = 'x'; y = 1\n",
+                &[("rst_prolog", Some("\"a\"")), ("y", None)],
+                None,
+                &[(
+                    2,
+                    "unsupported statement dropped: def f(): rst_prolog = 'x'; y = 1",
+                )],
+            ),
+            (
+                "a one-line class body",
+                "class C: x = 1; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", None)],
+                None,
+                &[(
+                    1,
+                    "unsupported statement dropped: class C: x = 1; html_logo = 'missing.png'",
+                )],
+            ),
+            (
+                "a one-line case body",
+                "x = 'a'\nmatch x:\n    case 'a': rst_prolog = 'b'; y = 1\n",
+                &[("y", None)],
+                Some(("rst_prolog", 3, BLOCK)),
+                &[
+                    (2, "unsupported statement dropped: match x:"),
+                    (
+                        3,
+                        "unsupported statement dropped: case 'a': rst_prolog = 'b'; y = 1",
+                    ),
+                ],
+            ),
+        ];
+        for (label, content, names, unevaluable, notices) in rows {
+            let p = parse(content);
+            for (name, value) in names {
+                let held = p.conf_namespace.get(*name).map(ToString::to_string);
+                assert_eq!(held.as_deref(), *value, "{label}: {name}");
+            }
+            let binding = p
+                .unevaluable()
+                .map(|binding| (binding.key, binding.line, binding.reason.as_str()));
+            assert_eq!(binding, unevaluable, "{label}");
+            let got: Vec<(usize, &str)> = p
+                .warnings()
+                .iter()
+                .map(|warning| (warning.line, warning.message.as_str()))
+                .collect();
+            assert_eq!(got, notices, "{label}");
         }
     }
 
