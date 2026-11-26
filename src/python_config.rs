@@ -1287,7 +1287,12 @@ fn logical_statements(content: &str) -> Vec<(usize, String)> {
 /// ([`opens_one_line_body`]). Any other line is one statement, read as
 /// before: a compound statement with a one-line body
 /// (`if x: a = 1; b = 2`), or a line Python rejects (`x = 1;; y = 2`,
-/// `x = 1; if y: z = 2`).
+/// `x = 1; if y: z = 2`). Strings end where Python 3.12 ends them, an
+/// f-string past what its replacement fields nest ([`skip_literal`]). A
+/// line also stays one statement when it holds a literal that scan cannot
+/// end, or a line break outside strings and brackets: there
+/// [`logical_statements`], whose scan knows no f-string, joined physical
+/// lines that Python reads apart.
 fn simple_statements(stmt: &str) -> Vec<&str> {
     let bytes = stmt.as_bytes();
     let mut semicolons = Vec::new();
@@ -1295,12 +1300,16 @@ fn simple_statements(stmt: &str) -> Vec<&str> {
     while i < bytes.len() {
         match bytes[i] {
             quote @ (b'\'' | b'"') => {
-                i = skip_string(bytes, i, quote);
+                match skip_literal(bytes, i, quote) {
+                    Some(end) => i = end,
+                    None => return vec![stmt],
+                }
                 continue;
             }
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth -= 1,
             b';' if depth == 0 => semicolons.push(i),
+            b'\n' if depth == 0 => return vec![stmt],
             _ => {}
         }
         i += 1;
@@ -1342,14 +1351,18 @@ const NO_SIMPLE_STATEMENT: [&str; 17] = [
 /// and brackets (no `:=`) ends neither one target, as an annotated
 /// assignment's does ([`reads_as_one_target`]), nor a lambda's
 /// parameters. That sees a `case` clause, whose keyword is a name's too
-/// (`case 'a': x = 1; y = 2`).
+/// (`case 'a': x = 1; y = 2`). Strings end as [`simple_statements`] ends
+/// them, and a literal that scan cannot end counts as a body.
 fn opens_one_line_body(text: &str) -> bool {
     let bytes = text.as_bytes();
     let (mut depth, mut i) = (0i32, 0usize);
     while i < bytes.len() {
         match bytes[i] {
             quote @ (b'\'' | b'"') => {
-                i = skip_string(bytes, i, quote);
+                match skip_literal(bytes, i, quote) {
+                    Some(end) => i = end,
+                    None => return true,
+                }
                 continue;
             }
             b'(' | b'[' | b'{' => depth += 1,
@@ -2495,6 +2508,163 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
         }
     }
     bytes.len()
+}
+
+/// The index just past the Python string literal whose opening quote,
+/// `quote`, is at `start`, as CPython 3.12's tokenizer ends it (scratch
+/// `t19b1/fix5/out/fstring-edges*.out`), or `None` where the scan stops
+/// short. An f-string ([`is_fstring`]) ends at its own closing quote, past
+/// its replacement fields and what they nest ([`skip_field`]), `{{` and
+/// `}}` being literal braces there; any other literal ends as
+/// [`skip_string`] reads it. The scan stops at what Python rejects: no
+/// closing quote in `bytes`, a lone `}`, a line break in a single-quoted
+/// f-string's text, a field's unmatched bracket or stray backslash. It
+/// also stops at a line break in a single-quoted f-string's format spec,
+/// which Python takes for the spec's end.
+fn skip_literal(bytes: &[u8], start: usize, quote: u8) -> Option<usize> {
+    skip_literal_in(bytes, start, quote, 0)
+}
+
+/// How deep [`skip_literal`] follows f-strings and format-spec fields into
+/// one another before it gives up: past the 149 nested f-strings CPython
+/// 3.12.2 compiles (scratch `t19b1/fix5/out/fstring-edges2.out`), and a
+/// bound on the scan's recursion.
+const MAX_FSTRING_NESTING: usize = 200;
+
+/// The closing quote of an f-string being scanned, three of them when
+/// `triple`.
+#[derive(Clone, Copy)]
+struct FStringQuote {
+    quote: u8,
+    triple: bool,
+}
+
+impl FStringQuote {
+    /// The closing quote's width.
+    fn width(self) -> usize {
+        if self.triple {
+            3
+        } else {
+            1
+        }
+    }
+
+    /// Whether the closing quote starts at `i`.
+    fn closes_at(self, bytes: &[u8], i: usize) -> bool {
+        bytes[i] == self.quote
+            && (!self.triple
+                || (bytes.get(i + 1) == Some(&self.quote) && bytes.get(i + 2) == Some(&self.quote)))
+    }
+}
+
+/// [`skip_literal`] for a literal nested in `level` f-strings and fields.
+fn skip_literal_in(bytes: &[u8], start: usize, quote: u8, level: usize) -> Option<usize> {
+    if !is_fstring(bytes, start) {
+        return Some(skip_string(bytes, start, quote));
+    }
+    let triple = bytes.get(start + 1) == Some(&quote) && bytes.get(start + 2) == Some(&quote);
+    let fstring = FStringQuote { quote, triple };
+    let mut i = start + fstring.width();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i = skip_escape(bytes, i),
+            brace @ (b'{' | b'}') if bytes.get(i + 1) == Some(&brace) => i += 2,
+            b'{' => i = skip_field(bytes, i + 1, fstring, level)?,
+            b'}' => return None,
+            _ if fstring.closes_at(bytes, i) => return Some(i + fstring.width()),
+            b'\n' if !triple => return None,
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Whether the literal whose opening quote is at `quote_at` is an f-string:
+/// the identifier right before the quote is its prefix when it is one, and
+/// an f-string's is `f`, `fr` or `rf`, in any case. Another identifier
+/// there is a word of its own, as `if` is in `x if"a"else y`.
+fn is_fstring(bytes: &[u8], quote_at: usize) -> bool {
+    let mut start = quote_at;
+    while start > 0 && is_identifier_byte(bytes[start - 1]) {
+        start -= 1;
+    }
+    let prefix = &bytes[start..quote_at];
+    let prefixes: [&[u8]; 3] = [b"f", b"fr", b"rf"];
+    prefixes.iter().any(|f| prefix.eq_ignore_ascii_case(f))
+}
+
+/// The index past the backslash at `i` in an f-string's literal text or
+/// format spec, and past what it escapes: nothing before a brace, which
+/// opens or closes a field all the same (`f"\{x}"`), raw or not; else the
+/// byte after it, a quote among them. A named character's `\N{...}` thus
+/// scans as a field, which ends where the escape does: a character's name
+/// holds no quote, bracket, colon or `#`.
+fn skip_escape(bytes: &[u8], i: usize) -> usize {
+    match bytes.get(i + 1) {
+        Some(b'{' | b'}') => i + 1,
+        _ => i + 2,
+    }
+}
+
+/// The index past the `}` that closes the replacement field of `fstring`
+/// whose expression starts at `start`. Brackets nest in the expression,
+/// and so do strings with any quote and f-strings (PEP 701); a comment
+/// runs to the end of its line, and a backslash before a line break
+/// continues the line. A `:` outside brackets starts the format spec
+/// ([`skip_format_spec`]). `None` at an unmatched bracket, a backslash
+/// before anything else, or a comment no line break ends.
+fn skip_field(bytes: &[u8], start: usize, fstring: FStringQuote, level: usize) -> Option<usize> {
+    if level >= MAX_FSTRING_NESTING {
+        return None;
+    }
+    let mut brackets = Vec::new();
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_literal_in(bytes, i, quote, level + 1)?;
+                continue;
+            }
+            b'#' => i += bytes[i..].iter().position(|&byte| byte == b'\n')?,
+            b'\\' if bytes.get(i + 1) == Some(&b'\n') => i += 1,
+            b'\\' => return None,
+            open @ (b'(' | b'[' | b'{') => brackets.push(open),
+            close @ (b')' | b']' | b'}') => match (brackets.pop(), close) {
+                (None, b'}') => return Some(i + 1),
+                (Some(b'('), b')') | (Some(b'['), b']') | (Some(b'{'), b'}') => {}
+                _ => return None,
+            },
+            b':' if brackets.is_empty() => return skip_format_spec(bytes, i + 1, fstring, level),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The index past the `}` that ends the format spec of a replacement field
+/// of `fstring`, the spec starting at `start`: literal text, as the
+/// f-string's own is, but for its braces: each `{` opens a field of its own
+/// (`{{` too), and the first `}` ends the spec. `None` at the f-string's
+/// closing quote, or at a line break in a single-quoted f-string.
+fn skip_format_spec(
+    bytes: &[u8],
+    start: usize,
+    fstring: FStringQuote,
+    level: usize,
+) -> Option<usize> {
+    let mut i = start;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i = skip_escape(bytes, i),
+            b'{' => i = skip_field(bytes, i + 1, fstring, level + 1)?,
+            b'}' => return Some(i + 1),
+            _ if fstring.closes_at(bytes, i) => return None,
+            b'\n' if !fstring.triple => return None,
+            _ => i += 1,
+        }
+    }
+    None
 }
 
 /// The names, attributes and items a target binds.
@@ -5724,9 +5894,10 @@ e = 'esc\n'
     /// assignment, and before an import (scratch
     /// `t19b1c/semi_import_prolog.json`, `semi_generic.json`,
     /// `semi_assign_prolog.json`, `semi_prolog_then_import.json`;
-    /// `t19b1/fix4/specs/semi_*`). A `;` in a string splits nothing, and a
-    /// compound statement's one-line body, a `case` clause's among them,
-    /// stays one statement, read as before.
+    /// `t19b1/fix4/specs/semi_*`). A `;` in a string splits nothing, nor
+    /// does one in an f-string's replacement field, whatever the field
+    /// nests, and a compound statement's one-line body, a `case` clause's
+    /// among them, stays one statement, read as before.
     #[test]
     fn semicolon_joined_statements_are_read_one_by_one() {
         /// A label, a `conf.py` text, what the namespace holds for some
@@ -5742,7 +5913,8 @@ e = 'esc\n'
         );
         const PROLOG: Option<&str> = Some("\".. |a| replace:: A\\n\"");
         const BLOCK: &str = "an assignment inside a block";
-        let rows: [Row; 18] = [
+        const CANNOT: &str = "an assignment it cannot evaluate";
+        let rows: [Row; 31] = [
             (
                 "semi_import_prolog",
                 "extensions = []\nimport os; rst_prolog = '.. |a| replace:: A\\n'\n",
@@ -5916,6 +6088,171 @@ e = 'esc\n'
                 Some(("rst_prolog", 1, "trailing expression")),
                 &[],
             ),
+            // A `;` in an f-string's replacement field, in a string or an
+            // f-string the field nests (PEP 701) or in its format spec,
+            // splits nothing: the line stays one statement, read as before
+            // (ledger "Ruling (T19b1 round-4 minor 2, ...)"). A `;` after the
+            // f-string splits the line: `{{` and `}}` are literal braces, a
+            // format spec's quote is literal text, and a field's comment and
+            // line continuation are skipped. Sphinx 9.1.0 binds each key a
+            // row binds, and none that only a string's text names (scratch
+            // `t19b1-rereview-r4/specs/r4_fstring_*`, `t19b1/fix5/specs/fstring_*`).
+            (
+                "r4_fstring_nested_prolog",
+                "extensions = []\nx = f\"{\"a; rst_prolog = '.. |a| replace:: A\\n'\"}\"\n",
+                &[("x", None)],
+                Some(("rst_prolog", 2, CANNOT)),
+                &[(
+                    2,
+                    "unsupported statement dropped: \
+                     x = f\"{\"a; rst_prolog = '.. |a| replace:: A\\n'\"}\"",
+                )],
+            ),
+            (
+                "r4_fstring_nested_generic",
+                "extensions = []\nx = f\"{\"a; html_logo = 'missing.png'\"}\"\n",
+                &[("x", None), ("html_logo", None)],
+                None,
+                &[(
+                    2,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     f\"{\"a; html_logo = 'missing.png'\"}\"",
+                )],
+            ),
+            (
+                "a `;` in an f-string a replacement field nests",
+                "x = f\"{f\"{1}; rst_prolog = '.. |a| replace:: A\\n'\"}\"\n",
+                &[("x", None)],
+                Some(("rst_prolog", 1, CANNOT)),
+                &[(
+                    1,
+                    "unsupported statement dropped: \
+                     x = f\"{f\"{1}; rst_prolog = '.. |a| replace:: A\\n'\"}\"",
+                )],
+            ),
+            (
+                "a `;` in a string a format spec's field nests",
+                "x = f\"{1:{\";\"}>3}\"; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     f\"{1:{\";\"}>3}\"",
+                )],
+            ),
+            (
+                "a triple-quoted f-string nesting its own quotes, then a `;`",
+                "x = f\"\"\"a\"{\"\"\"b; html_logo = 'missing.png'\"\"\"}\"\"\"; y = 1\n",
+                &[("x", None), ("html_logo", None), ("y", Some("1"))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     f\"\"\"a\"{\"\"\"b; html_logo = 'missing.png'\"\"\"}\"\"\"",
+                )],
+            ),
+            (
+                "an f-string's literal braces, then a `;`",
+                "x = f\"{{a; b}}\"; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): f\"{{a; b}}\"",
+                )],
+            ),
+            (
+                "a brace pair split across two f-strings",
+                "x = f\"{{\"; html_logo = 'missing.png'; y = f\"}}\"\n",
+                &[
+                    ("x", None),
+                    ("html_logo", Some("\"missing.png\"")),
+                    ("y", None),
+                ],
+                None,
+                &[
+                    (
+                        1,
+                        "unsupported value for 'x' dropped (unsupported expression): f\"{{\"",
+                    ),
+                    (
+                        1,
+                        "unsupported value for 'y' dropped (unsupported expression): f\"}}\"",
+                    ),
+                ],
+            ),
+            (
+                "a colon in a replacement field's string, then a `;`",
+                "x = f\"{\"a: b\"}\"; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): f\"{\"a: b\"}\"",
+                )],
+            ),
+            (
+                "a quote in a format spec, then a `;`",
+                "x = f\"{1:'>3}\"; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): f\"{1:'>3}\"",
+                )],
+            ),
+            (
+                "a comment and a continued line in a replacement field, then a `;`",
+                "x = f\"\"\"{1 + \\\n 2 # a \"; html_logo = 'missing.png'\n}\"\"\"; y = 1\n",
+                &[("x", None), ("html_logo", None), ("y", Some("1"))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     f\"\"\"{1 + \\\n 2 # a \"; html_logo = 'missing.png'\n}\"\"\"",
+                )],
+            ),
+            (
+                "a backslash before a replacement field's brace, in a raw f-string",
+                "x = Rf\"\\{\"a; html_logo = 'missing.png'\"}\"\n",
+                &[("x", None), ("html_logo", None)],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     Rf\"\\{\"a; html_logo = 'missing.png'\"}\"",
+                )],
+            ),
+            (
+                "a keyword right before a string's quote is no prefix",
+                "x = 1 if\"{\"else 2; html_logo = 'missing.png'\n",
+                &[("x", None), ("html_logo", Some("\"missing.png\""))],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (trailing expression): 1 if\"{\"else 2",
+                )],
+            ),
+            // A line break outside strings and brackets: `logical_statements`,
+            // whose scan ends the f-string at the nested quote, joined two
+            // lines Python reads apart. The text stays one statement, read as
+            // before, so the prolog Sphinx reads is missed, as it was (scratch
+            // `t19b1/fix5/specs/fstring_misjoined_concat_prolog.json`: Sphinx
+            // 9.1.0 defines `|a|` only). Split at the `;`, its second
+            // statement read both lines' strings as one literal, a prolog
+            // Sphinx never reads (`|a|` and `|b|`).
+            (
+                "a line break outside strings and brackets",
+                "x = f\"{\"'\"}\"; rst_prolog = '.. |a| replace:: A\\n'\n'.. |b| replace:: B\\n'\n",
+                &[("x", None), ("rst_prolog", None)],
+                None,
+                &[(
+                    1,
+                    "unsupported value for 'x' dropped (unsupported expression): \
+                     f\"{\"'\"}\"; rst_prolog = '.. |a| replace:: A\\n'\n'.. |b| replac…",
+                )],
+            ),
         ];
         for (label, content, names, unevaluable, notices) in rows {
             let p = parse(content);
@@ -5934,6 +6271,27 @@ e = 'esc\n'
                 .collect();
             assert_eq!(got, notices, "{label}");
         }
+    }
+
+    /// The split's string scan follows f-strings nested in replacement
+    /// fields as deep as CPython 3.12.2 compiles them, 149 (scratch
+    /// `t19b1/fix5/out/fstring-edges2.out`), and gives up past
+    /// [`MAX_FSTRING_NESTING`] levels, so a line nesting deeper stays one
+    /// statement instead of exhausting the stack. Not a `conf.py` row:
+    /// Python rejects the deeper line (too many nested f-strings).
+    #[test]
+    fn the_split_follows_nested_fstrings_to_a_bound() {
+        let nested = |depth: usize| {
+            format!(
+                "y = 1; x = {}1{}",
+                "f\"{".repeat(depth),
+                "}\"".repeat(depth)
+            )
+        };
+        let deep = nested(149);
+        assert_eq!(simple_statements(&deep), ["y = 1", &deep[7..]]);
+        let deeper = nested(100_000);
+        assert_eq!(simple_statements(&deeper), [deeper.as_str()]);
     }
 
     /// The conf.py reader's string literals, as CPython 3.12.2 compiles
